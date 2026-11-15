@@ -15,6 +15,7 @@ const unit = $<HTMLSelectElement>('set-unit');
 const tolerance = $<HTMLSelectElement>('set-tolerance');
 const camera = $<HTMLInputElement>('set-camera');
 const demo = $<HTMLInputElement>('set-demo');
+const tmapKey = $<HTMLInputElement>('set-tmap-key');
 const results = $<HTMLUListElement>('results');
 const searchInput = $<HTMLInputElement>('search-input');
 const searchMessage = $('nav-message');
@@ -24,6 +25,7 @@ unit.onchange = () => app.updateSettings({ unit: unit.value as Unit });
 tolerance.onchange = () => app.updateSettings({ overspeedTolerance: Number(tolerance.value) });
 camera.onchange = () => app.updateSettings({ cameraAlerts: camera.checked });
 demo.onchange = () => app.updateSettings({ demo: demo.checked });
+tmapKey.onchange = () => app.updateSettings({ tmapApiKey: tmapKey.value.trim() });
 $('nav-stop').onclick = () => app.stopNavigation();
 
 let lastPosition: Place | null = null;
@@ -53,7 +55,7 @@ $<HTMLFormElement>('search-form').onsubmit = async (e) => {
   searchError = '검색 중…';
   searchMessage.textContent = searchError;
   try {
-    const places = await searchPlaces(query, lastPosition);
+    const places = await searchPlaces(query, lastPosition, app.settings.tmapApiKey);
     showResults(places);
     searchError = places.length ? '' : '검색 결과가 없습니다';
   } catch (err) {
@@ -70,6 +72,7 @@ app.onState((s: AppState) => {
   tolerance.value = String(s.settings.overspeedTolerance);
   camera.checked = s.settings.cameraAlerts;
   demo.checked = s.settings.demo;
+  if (document.activeElement !== tmapKey) tmapKey.value = s.settings.tmapApiKey;
   searchInput.disabled = s.settings.demo;
   $('nav-active').hidden = !s.destination;
   $('nav-dest').textContent = s.destination?.name ?? '';

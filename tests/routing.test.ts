@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { demoFix, demoRoadData, demoRoute } from '../src/services/demo';
 import { matchLimit } from '../src/services/roads';
-import { osrmToRoute, routeFromPolyline, RouteTracker } from '../src/services/routing';
+import { osrmToRoute, routeFromPolyline, RouteTracker, tmapToRoute } from '../src/services/routing';
 
 // North 1.1 km, then east 0.9 km.
 const L = [
@@ -57,6 +57,48 @@ describe('osrmToRoute', () => {
 
   it('throws when there is no route', () => {
     expect(() => osrmToRoute({ code: 'NoRoute', message: 'Impossible route' })).toThrow('Impossible route');
+  });
+});
+
+describe('tmapToRoute', () => {
+  const point = (p: { lat: number; lon: number }, props: Record<string, unknown>) => ({
+    geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+    properties: props,
+  });
+  const line = (pts: { lat: number; lon: number }[], props: Record<string, unknown>) => ({
+    geometry: { type: 'LineString', coordinates: pts.map((p) => [p.lon, p.lat]) },
+    properties: props,
+  });
+  const json = {
+    features: [
+      point(L[0], { turnType: 200, totalTime: 200 }),
+      line([L[0], L[1]], { name: 'A로' }),
+      point(L[1], { turnType: 13, description: '우회전' }),
+      line([L[1], L[2]], { name: 'C로' }),
+      point(L[2], { turnType: 201 }),
+    ],
+  };
+
+  it('keeps real manoeuvres, names them from the following segment, and totals distance/duration', () => {
+    const route = tmapToRoute(json);
+    expect(route.steps.map((s) => [s.icon, s.name])).toEqual([
+      ['right', 'C로'],
+      ['arrive', ''],
+    ]);
+    expect(route.steps[0].at).toBeCloseTo(1112, -1);
+    expect(route.distance).toBeCloseTo(1994, 0);
+    expect(route.duration).toBe(200);
+  });
+
+  it('drops turn codes it does not recognise rather than guessing', () => {
+    const route = tmapToRoute({
+      features: [point(L[0], { turnType: 200 }), line([L[0], L[1]], { name: 'A로' }), point(L[1], { turnType: 11 })],
+    });
+    expect(route.steps).toEqual([]);
+  });
+
+  it('throws when there is no route', () => {
+    expect(() => tmapToRoute({ features: [] })).toThrow();
   });
 });
 

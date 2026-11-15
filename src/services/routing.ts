@@ -146,8 +146,71 @@ export class RouteTracker {
 
 const OSRM_URL = 'https://router.project-osrm.org/route/v1/driving';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+const TMAP_ROUTE_URL = 'https://apis.openapi.sk.com/tmap/routes?version=1';
+const TMAP_POI_URL = 'https://apis.openapi.sk.com/tmap/pois';
 
-export async function fetchRoute(from: LatLon, to: LatLon, fetchFn: typeof fetch = fetch): Promise<Route> {
+/**
+ * Turn codes shared by Tmap's car/pedestrian guidance. Codes outside this map (lane-change,
+ * crosswalk, waypoint markers, …) are dropped rather than guessed, since a wrong arrow on a
+ * driving HUD is worse than a missing one.
+ */
+const TMAP_TURN_ICON: Record<number, ManeuverIcon> = {
+  12: 'left',
+  13: 'right',
+  14: 'uturn',
+  16: 'sharp-left',
+  17: 'slight-left',
+  18: 'slight-right',
+  19: 'sharp-right',
+  201: 'arrive',
+};
+
+/** Convert a Tmap `/tmap/routes` GeoJSON response into a Route. */
+export function tmapToRoute(json: any): Route {
+  const features: any[] = json?.features ?? [];
+  if (!features.length) throw new Error(json?.error?.message || '경로를 찾을 수 없습니다');
+  const points: LatLon[] = [];
+  const rawSteps: { icon: ManeuverIcon; name: string; idx: number }[] = [];
+  let duration = 0;
+  for (let i = 0; i < features.length; i++) {
+    const f = features[i];
+    if (f.geometry?.type === 'LineString') {
+      for (const [lon, lat] of f.geometry.coordinates) points.push({ lat, lon });
+    } else if (f.geometry?.type === 'Point') {
+      const p = f.properties ?? {};
+      if (typeof p.totalTime === 'number') duration = p.totalTime;
+      const icon = TMAP_TURN_ICON[p.turnType];
+      if (icon) {
+        const next = features.slice(i + 1).find((g) => g.geometry?.type === 'LineString');
+        rawSteps.push({ icon, name: next?.properties?.name || '', idx: points.length });
+      }
+    }
+  }
+  const cum = cumulative(points);
+  const total = cum[cum.length - 1] ?? 0;
+  const steps: Step[] = rawSteps.map((s) => ({ icon: s.icon, name: s.name, at: cum[Math.min(s.idx, cum.length - 1)] }));
+  return { points, cum, steps, distance: total, duration };
+}
+
+export async function fetchRoute(from: LatLon, to: LatLon, apiKey = '', fetchFn: typeof fetch = fetch): Promise<Route> {
+  if (apiKey) {
+    const res = await fetchFn(TMAP_ROUTE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', appKey: apiKey },
+      body: JSON.stringify({
+        startX: from.lon,
+        startY: from.lat,
+        endX: to.lon,
+        endY: to.lat,
+        reqCoordType: 'WGS84GEO',
+        resCoordType: 'WGS84GEO',
+        searchOption: '0',
+        sort: 'index',
+      }),
+    });
+    if (!res.ok) throw new Error(`경로 서버 오류 (HTTP ${res.status})`);
+    return tmapToRoute(await res.json());
+  }
   const url = `${OSRM_URL}/${from.lon},${from.lat};${to.lon},${to.lat}?steps=true&overview=full&geometries=geojson`;
   const res = await fetchFn(url);
   if (!res.ok) throw new Error(`경로 서버 오류 (HTTP ${res.status})`);
@@ -155,7 +218,30 @@ export async function fetchRoute(from: LatLon, to: LatLon, fetchFn: typeof fetch
 }
 
 /** Free-text destination search, biased towards (but not limited to) the area around `near`. */
-export async function searchPlaces(query: string, near: LatLon | null, fetchFn: typeof fetch = fetch): Promise<Place[]> {
+export async function searchPlaces(
+  query: string,
+  near: LatLon | null,
+  apiKey = '',
+  fetchFn: typeof fetch = fetch,
+): Promise<Place[]> {
+  if (apiKey) {
+    const params = new URLSearchParams({ version: '1', searchKeyword: query, count: '6' });
+    if (near) {
+      params.set('searchtypCd', 'R');
+      params.set('centerLon', String(near.lon));
+      params.set('centerLat', String(near.lat));
+      params.set('radius', '20');
+    }
+    const res = await fetchFn(`${TMAP_POI_URL}?${params}`, { headers: { appKey: apiKey, Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`검색 서버 오류 (HTTP ${res.status})`);
+    const json = await res.json();
+    const pois: any[] = json?.searchPoiInfo?.pois?.poi ?? [];
+    return pois.map((p) => ({
+      name: p.name,
+      lat: parseFloat(p.frontLat || p.noorLat),
+      lon: parseFloat(p.frontLon || p.noorLon),
+    }));
+  }
   const params = new URLSearchParams({ q: query, format: 'jsonv2', limit: '6', 'accept-language': 'ko' });
   if (near) {
     const d = 0.5;

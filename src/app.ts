@@ -105,7 +105,7 @@ export class App {
     this.navMessage = '경로 탐색 중…';
     this.tick();
     try {
-      this.tracker = new RouteTracker(await fetchRoute(this.fix, place));
+      this.tracker = new RouteTracker(await fetchRoute(this.fix, place, this.settings.tmapApiKey));
       this.navMessage = '';
     } catch (e) {
       this.tracker = null;

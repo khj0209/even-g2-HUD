@@ -24,6 +24,8 @@ export interface Settings {
   overspeedTolerance: number;
   cameraAlerts: boolean;
   demo: boolean;
+  /** Personal Tmap(SK open api) appKey. Empty string falls back to OSRM/Nominatim. */
+  tmapApiKey: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -32,6 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
   overspeedTolerance: 0,
   cameraAlerts: true,
   demo: false,
+  tmapApiKey: '',
 };
 
 export type ManeuverIcon =
