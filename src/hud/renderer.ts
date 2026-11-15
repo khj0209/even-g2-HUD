@@ -1,5 +1,5 @@
 import type { DisplayMode } from '../core/types';
-import { drawLimit, drawSpeed, drawTurn } from './draw';
+import { drawLimit, drawMinimap, drawSpeed, drawTurn } from './draw';
 import { layoutFor, type Box } from './layout';
 import { textModeLines, type HudView } from './view';
 
@@ -64,6 +64,11 @@ export class HudRenderer {
         return [`${v.limit}|${v.over}|${v.alert}`, () => drawLimit(v.limit, v.over, v.alert)];
       case 'turn':
         return [v.nav ? `${v.nav.icon}|${v.nav.dist}` : '', () => drawTurn(v.nav)];
+      case 'minimap': {
+        // Round points so small GPS jitter doesn't repaint the image every tick.
+        const key = v.minimap ? v.minimap.points.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(';') : '';
+        return [key, () => drawMinimap(v.minimap)];
+      }
       case 'info':
         return [v.info];
       case 'text':

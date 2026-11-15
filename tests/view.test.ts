@@ -10,6 +10,7 @@ const input = (over: Partial<HudInput> = {}): HudInput => ({
   limit: 60,
   camera: null,
   nav: null,
+  route: null,
   settings: DEFAULT_SETTINGS,
   now,
   ...over,
@@ -58,6 +59,34 @@ describe('buildView', () => {
   it('hides camera alerts when disabled', () => {
     const v = buildView(input({ camera: { dist: 280, limit: 50 }, settings: { ...DEFAULT_SETTINGS, cameraAlerts: false } }));
     expect(v.alert).toBe('');
+  });
+});
+
+describe('buildView minimap', () => {
+  const route = { points: [{ lat: 37.5, lon: 127 }, { lat: 37.5, lon: 127.0011327 }], cum: [0, 100], steps: [], distance: 100, duration: 10 };
+
+  it('rotates heading-up: a point dead ahead (east, facing east) ends up straight up on screen', () => {
+    const v = buildView(input({ route, fix: { lat: 37.5, lon: 127, speed: 10, heading: 90, ts: now.getTime() } }));
+    expect(v.minimap?.headingKnown).toBe(true);
+    expect(v.minimap?.points[0]).toMatchObject({ x: expect.closeTo(0, 5), y: expect.closeTo(0, 5) });
+    expect(v.minimap?.points[1].x).toBeCloseTo(0, 0);
+    expect(v.minimap?.points[1].y).toBeLessThan(-20); // negative y = up = ahead
+  });
+
+  it('is null when not navigating', () => {
+    expect(buildView(input({ route: null })).minimap).toBeNull();
+  });
+
+  it('falls back to north-up and a plain marker without a heading', () => {
+    const v = buildView(input({ route, fix: { lat: 37.5, lon: 127, speed: 0, heading: null, ts: now.getTime() } }));
+    expect(v.minimap?.headingKnown).toBe(false);
+  });
+
+  it('still draws a line when both vertices of a long leg are farther than the box radius (demo-route regression)', () => {
+    // A single 1000 m leg (like the demo drive's legs); car sits at its midpoint, 500 m from either end.
+    const longLeg = { points: [{ lat: 37.5, lon: 127 }, { lat: 37.509, lon: 127 }], cum: [0, 1001], steps: [], distance: 1001, duration: 60 };
+    const v = buildView(input({ route: longLeg, fix: { lat: 37.5045, lon: 127, speed: 10, heading: 0, ts: now.getTime() } }));
+    expect(v.minimap?.points.length).toBeGreaterThanOrEqual(2);
   });
 });
 

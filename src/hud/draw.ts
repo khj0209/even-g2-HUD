@@ -1,4 +1,4 @@
-import type { ManeuverIcon } from '../core/types';
+import type { ManeuverIcon, MinimapView } from '../core/types';
 
 /** Bitmaps for the glasses: white on black, which the G2 shows as green on transparent. */
 
@@ -146,6 +146,38 @@ function arrow(ctx: CanvasRenderingContext2D, icon: ManeuverIcon): void {
   for (const p of pts.slice(1)) ctx.lineTo(...p);
   ctx.stroke();
   arrowHead(ctx, pts[pts.length - 2], pts[pts.length - 1]);
+}
+
+/** Top-right corner box: car-centred, heading-up route line. Null (or too short) draws just the bezel. */
+export function drawMinimap(mm: MinimapView | null): HTMLCanvasElement {
+  const [c, ctx] = canvas(100, 100);
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(2, 2, 96, 96, 14);
+  ctx.stroke();
+  if (!mm) return c;
+
+  ctx.save();
+  ctx.translate(50, 50);
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(mm.points[0].x, mm.points[0].y);
+  for (const p of mm.points.slice(1)) ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+
+  // Car marker, centred: an arrow when heading-up (always points "up" by construction), else a plain dot.
+  ctx.beginPath();
+  if (mm.headingKnown) {
+    ctx.moveTo(0, -8);
+    ctx.lineTo(6, 7);
+    ctx.lineTo(-6, 7);
+    ctx.closePath();
+  } else {
+    ctx.arc(0, 0, 5, 0, Math.PI * 2);
+  }
+  ctx.fill();
+  ctx.restore();
+  return c;
 }
 
 /** Encode a canvas as PNG bytes for `updateImageRawData`. */

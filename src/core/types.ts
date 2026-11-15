@@ -65,3 +65,16 @@ export interface CameraAlert {
   /** km/h, if tagged. */
   limit: number | null;
 }
+
+/** A point already projected to pixels relative to the car (heading-up rotated, if known). */
+export interface MinimapPoint {
+  x: number;
+  y: number;
+}
+
+export interface MinimapView {
+  /** Route points near the car, ahead and behind. */
+  points: MinimapPoint[];
+  /** Whether rotation is heading-up (true) or plain north-up because heading is unknown (false). */
+  headingKnown: boolean;
+}

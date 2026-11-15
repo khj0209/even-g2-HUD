@@ -179,7 +179,7 @@ export class App {
       camera = cameraAhead(this.roads.data, fix);
       nav = this.trackRoute(fix);
     }
-    const view = buildView({ fix, limit, camera, nav, settings: this.settings, now });
+    const view = buildView({ fix, limit, camera, nav, route: this.tracker?.route ?? null, settings: this.settings, now });
     this.renderer.render(view);
     const state: AppState = {
       view,

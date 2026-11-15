@@ -56,6 +56,13 @@ export function interpolate(a: LatLon, b: LatLon, t: number): LatLon {
   return { lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t };
 }
 
+/** East/north offset of `to` from `from`, in metres (flat-earth approximation, fine at road scale). */
+export function localOffset(from: LatLon, to: LatLon): { east: number; north: number } {
+  const kx = R * rad(1) * Math.cos(rad(from.lat));
+  const ky = R * rad(1);
+  return { east: (to.lon - from.lon) * kx, north: (to.lat - from.lat) * ky };
+}
+
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 export function compass(heading: number): string {
   return COMPASS[Math.round((((heading % 360) + 360) % 360) / 45) % 8];

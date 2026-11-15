@@ -1,6 +1,7 @@
-import { compass } from '../core/geo';
+import { compass, localOffset, projectOnSegment } from '../core/geo';
 import { displayLimit, displaySpeed, formatClock, formatDistance, KMH_PER_MPS, unitLabel } from '../core/format';
-import type { CameraAlert, Fix, ManeuverIcon, NavProgress, Settings } from '../core/types';
+import type { CameraAlert, Fix, LatLon, ManeuverIcon, MinimapView, NavProgress, Settings } from '../core/types';
+import type { Route } from '../services/routing';
 
 export interface HudInput {
   /** Latest fix, or null when GPS is missing/stale. */
@@ -9,6 +10,8 @@ export interface HudInput {
   limit: number | null;
   camera: CameraAlert | null;
   nav: NavProgress | null;
+  /** Active route, for the minimap. Null when not navigating. */
+  route: Route | null;
   settings: Settings;
   now: Date;
 }
@@ -25,6 +28,8 @@ export interface HudView {
   info: string;
   /** Short camera warning, e.g. "단속 300 m", or empty. */
   alert: string;
+  /** Null when there's no route to show (not navigating). */
+  minimap: MinimapView | null;
 }
 
 const ICON_TEXT: Record<ManeuverIcon, string> = {
@@ -40,8 +45,57 @@ const ICON_TEXT: Record<ManeuverIcon, string> = {
   arrive: '도착',
 };
 
+/** Metres from the car to the edge of the minimap box. */
+const MINIMAP_RADIUS_M = 150;
+/** Half the minimap image, in pixels, leaving a margin inside its 100×100 box. */
+const MINIMAP_PX = 42;
+
+/** Distance travelled to the point on the route closest to `fix` (same approach as RouteTracker). */
+function travelledAt(route: Route, fix: Fix): number {
+  const { points, cum } = route;
+  let best = { dist: Infinity, seg: 0, t: 0 };
+  for (let i = 0; i + 1 < points.length; i++) {
+    const p = projectOnSegment(fix, points[i], points[i + 1]);
+    if (p.dist < best.dist) best = { dist: p.dist, seg: i, t: p.t };
+  }
+  return cum[best.seg] + best.t * (cum[best.seg + 1] - cum[best.seg]);
+}
+
+/**
+ * Vertices spanning `travelled ± radius` along the route. Picked by cumulative distance, not raw
+ * distance from the car, so a long unsplit leg (demo routes; occasionally a real one) still yields
+ * a line through the box instead of vanishing because both its vertices sit outside `radius`.
+ */
+function routeWindow(route: Route, travelled: number, radius: number): LatLon[] {
+  const { points, cum } = route;
+  const lo = travelled - radius;
+  const hi = travelled + radius;
+  let start = 0;
+  while (start + 1 < points.length && cum[start + 1] < lo) start++;
+  let end = points.length - 1;
+  while (end > 0 && cum[end - 1] > hi) end--;
+  return points.slice(start, end + 1);
+}
+
+/** Route points near the car, heading-up rotated and scaled to pixels. Null when not navigating. */
+function buildMinimap(route: Route | null, fix: Fix | null): MinimapView | null {
+  if (!route || !fix || route.points.length < 2) return null;
+  const windowPts = routeWindow(route, travelledAt(route, fix), MINIMAP_RADIUS_M);
+  if (windowPts.length < 2) return null;
+  const headingKnown = fix.heading != null;
+  const h = ((fix.heading ?? 0) * Math.PI) / 180;
+  const cosH = Math.cos(h);
+  const sinH = Math.sin(h);
+  const scale = MINIMAP_PX / MINIMAP_RADIUS_M;
+  const points = windowPts.map((p) => {
+    const { east, north } = localOffset(fix, p);
+    return { x: (east * cosH - north * sinH) * scale, y: -(east * sinH + north * cosH) * scale };
+  });
+  return { points, headingKnown };
+}
+
 export function buildView(input: HudInput): HudView {
-  const { fix, camera, nav, settings, now } = input;
+  const { fix, camera, nav, route, settings, now } = input;
   const { unit } = settings;
   const kmh = fix?.speed != null ? fix.speed * KMH_PER_MPS : null;
   const cam = settings.cameraAlerts ? camera : null;
@@ -63,6 +117,7 @@ export function buildView(input: HudInput): HudView {
     nav: nav && { icon: nav.icon, dist: formatDistance(nav.distToManeuver, unit) },
     info,
     alert: cam ? `단속 ${formatDistance(cam.dist, unit)}` : '',
+    minimap: buildMinimap(route, fix),
   };
 }
 
