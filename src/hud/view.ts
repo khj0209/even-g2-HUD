@@ -20,8 +20,10 @@ export interface HudView {
   /** Driving faster than limit + tolerance. */
   over: boolean;
   limit: number | null;
-  nav: { icon: ManeuverIcon; dist: string; road: string; trip: string } | null;
-  status: string;
+  nav: { icon: ManeuverIcon; dist: string } | null;
+  /** One line above the cluster: road and arrival while guiding, otherwise clock and heading. */
+  info: string;
+  /** Short camera warning, e.g. "단속 300 m", or empty. */
   alert: string;
 }
 
@@ -39,49 +41,39 @@ const ICON_TEXT: Record<ManeuverIcon, string> = {
 };
 
 export function buildView(input: HudInput): HudView {
-  const { fix, limit, camera, nav, settings, now } = input;
+  const { fix, camera, nav, settings, now } = input;
   const { unit } = settings;
   const kmh = fix?.speed != null ? fix.speed * KMH_PER_MPS : null;
+  const cam = settings.cameraAlerts ? camera : null;
+  // Where the road itself has no tagged limit, the limit enforced by an upcoming camera still applies.
+  const limit = input.limit ?? cam?.limit ?? null;
 
-  const status = [formatClock(now)];
-  if (fix?.heading != null) status.push(compass(fix.heading));
-  if (!fix) status.push('GPS 없음');
-
-  let alert = '';
-  if (settings.cameraAlerts && camera) {
-    alert = `단속 ${formatDistance(camera.dist, unit)}`;
-    if (camera.limit) alert += `\n제한 ${displayLimit(camera.limit, unit)}`;
-  }
+  let info: string;
+  if (!fix) info = `${formatClock(now)}  GPS 없음`;
+  else if (nav) {
+    const eta = formatClock(new Date(now.getTime() + nav.remainingTime * 1000));
+    info = [nav.roadName, `${formatDistance(nav.remainingDist, unit)} · ${eta} 도착`].filter(Boolean).join('  ');
+  } else info = [formatClock(now), fix.heading != null ? compass(fix.heading) : ''].filter(Boolean).join('  ');
 
   return {
     speed: fix?.speed != null ? String(displaySpeed(fix.speed, unit)) : '--',
     unit: unitLabel(unit),
     over: kmh != null && limit != null && kmh > limit + settings.overspeedTolerance,
     limit: limit != null ? displayLimit(limit, unit) : null,
-    nav: nav && {
-      icon: nav.icon,
-      dist: formatDistance(nav.distToManeuver, unit),
-      road: nav.roadName,
-      trip: `${formatDistance(nav.remainingDist, unit)} · ${formatClock(new Date(now.getTime() + nav.remainingTime * 1000))} 도착`,
-    },
-    status: status.join('  '),
-    alert,
+    nav: nav && { icon: nav.icon, dist: formatDistance(nav.distToManeuver, unit) },
+    info,
+    alert: cam ? `단속 ${formatDistance(cam.dist, unit)}` : '',
   };
-}
-
-/** Lines for the nav text block next to the arrow. */
-export function navLines(view: HudView): string {
-  if (!view.nav) return ' ';
-  return [view.nav.dist, view.nav.road, view.nav.trip].filter(Boolean).join('\n');
 }
 
 /** The whole HUD as text, for text-only mode (no image transfers, so it updates fastest). */
 export function textModeLines(view: HudView): string {
   let first = `${view.speed} ${view.unit}`;
   if (view.limit != null) first += `   제한 ${view.limit}${view.over ? ' !' : ''}`;
+  if (view.alert) first += `   ${view.alert}`;
   const lines = [first];
-  if (view.nav) lines.push(`${ICON_TEXT[view.nav.icon]} ${view.nav.dist}${view.nav.road ? ' · ' + view.nav.road : ''}`);
-  if (view.alert) lines.push(view.alert.replace('\n', ' · '));
+  if (view.nav) lines.push(`${ICON_TEXT[view.nav.icon]} ${view.nav.dist}`);
+  lines.push(view.info);
   return lines.join('\n');
 }
 

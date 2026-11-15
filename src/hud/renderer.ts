@@ -1,7 +1,7 @@
 import type { DisplayMode } from '../core/types';
-import { drawArrow, drawSign, drawSpeed } from './draw';
+import { drawLimit, drawSpeed, drawTurn } from './draw';
 import { layoutFor, type Box } from './layout';
-import { navLines, textModeLines, type HudView } from './view';
+import { textModeLines, type HudView } from './view';
 
 /** Somewhere the HUD can be shown: the glasses, or the on-phone preview. */
 export interface HudSink {
@@ -60,16 +60,12 @@ export class HudRenderer {
     switch (box.name) {
       case 'speed':
         return [`${v.speed}|${v.unit}|${v.over}`, () => drawSpeed(v.speed, v.unit, v.over)];
-      case 'sign':
-        return [`${v.limit}|${v.over}`, () => drawSign(v.limit, v.over)];
-      case 'arrow':
-        return [v.nav?.icon ?? '', () => drawArrow(v.nav?.icon ?? null)];
-      case 'nav':
-        return [navLines(v)];
-      case 'status':
-        return [v.status];
-      case 'alert':
-        return [v.alert || ' '];
+      case 'limit':
+        return [`${v.limit}|${v.over}|${v.alert}`, () => drawLimit(v.limit, v.over, v.alert)];
+      case 'turn':
+        return [v.nav ? `${v.nav.icon}|${v.nav.dist}` : '', () => drawTurn(v.nav)];
+      case 'info':
+        return [v.info];
       case 'text':
         return [textModeLines(v)];
       default:

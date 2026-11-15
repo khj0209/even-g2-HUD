@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, type Fix } from '../src/core/types';
-import { buildView, LimitFilter, navLines, textModeLines, type HudInput } from '../src/hud/view';
+import { buildView, LimitFilter, textModeLines, type HudInput } from '../src/hud/view';
 import { FixNormalizer } from '../src/services/location';
 
 const now = new Date(2026, 0, 1, 14, 5);
@@ -18,7 +18,7 @@ const input = (over: Partial<HudInput> = {}): HudInput => ({
 describe('buildView', () => {
   it('shows speed, limit and overspeed', () => {
     const v = buildView(input());
-    expect(v).toMatchObject({ speed: '63', unit: 'km/h', limit: 60, over: true, status: '14:05  NE', alert: '', nav: null });
+    expect(v).toMatchObject({ speed: '63', unit: 'km/h', limit: 60, over: true, info: '14:05  NE', alert: '', nav: null });
   });
 
   it('respects the overspeed tolerance', () => {
@@ -29,7 +29,7 @@ describe('buildView', () => {
 
   it('shows placeholders without GPS', () => {
     const v = buildView(input({ fix: null, limit: null }));
-    expect(v).toMatchObject({ speed: '--', over: false, limit: null, status: '14:05  GPS 없음' });
+    expect(v).toMatchObject({ speed: '--', over: false, limit: null, info: '14:05  GPS 없음' });
   });
 
   it('converts to mph', () => {
@@ -44,9 +44,15 @@ describe('buildView', () => {
         camera: { dist: 280, limit: 50 },
       }),
     );
-    expect(navLines(v)).toBe('350 m\n테헤란로\n12 km · 14:32 도착');
-    expect(v.alert).toBe('단속 300 m\n제한 50');
-    expect(textModeLines(v)).toBe('63 km/h   제한 60 !\n좌회전 350 m · 테헤란로\n단속 300 m · 제한 50');
+    expect(v.nav).toEqual({ icon: 'left', dist: '350 m' });
+    expect(v.info).toBe('테헤란로  12 km · 14:32 도착');
+    expect(v.alert).toBe('단속 300 m');
+    expect(textModeLines(v)).toBe('63 km/h   제한 60 !   단속 300 m\n좌회전 350 m\n테헤란로  12 km · 14:32 도착');
+  });
+
+  it('falls back to the camera limit on roads with no tagged limit', () => {
+    const v = buildView(input({ limit: null, camera: { dist: 280, limit: 50 } }));
+    expect(v).toMatchObject({ limit: 50, over: true });
   });
 
   it('hides camera alerts when disabled', () => {
