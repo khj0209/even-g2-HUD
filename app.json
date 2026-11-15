@@ -1,0 +1,28 @@
+{
+  "package_id": "com.khj0209.drivehud",
+  "edition": "202601",
+  "name": "Drive HUD",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "location",
+      "desc": "Reads GPS speed, heading and position to show the driving HUD."
+    },
+    {
+      "name": "network",
+      "desc": "Looks up speed limits and speed cameras (OpenStreetMap) and calculates routes for turn-by-turn guidance.",
+      "whitelist": [
+        "https://overpass-api.de",
+        "https://router.project-osrm.org",
+        "https://nominatim.openstreetmap.org"
+      ]
+    }
+  ],
+  "supported_languages": [
+    "ko",
+    "en"
+  ]
+}

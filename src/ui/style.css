@@ -1,0 +1,154 @@
+:root {
+  color-scheme: dark;
+  --bg: #0d0f10;
+  --card: #181b1d;
+  --line: #2a2f32;
+  --text: #e9edee;
+  --dim: #8c9599;
+  --accent: #35f06a;
+  --danger: #ff6b5e;
+  font-family: system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 16px;
+}
+main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+  display: grid;
+  gap: 16px;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+h1 {
+  margin: 0;
+  font-size: 22px;
+}
+h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.pills {
+  display: flex;
+  gap: 8px;
+}
+.pill {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--dim);
+}
+.pill.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+#preview {
+  width: 100%;
+  aspect-ratio: 2 / 1;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #000;
+}
+section {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 16px;
+}
+form {
+  display: flex;
+  gap: 8px;
+}
+input[type='search'],
+select,
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-height: 44px;
+}
+input[type='search'] {
+  flex: 1;
+  min-width: 0;
+}
+button {
+  cursor: pointer;
+  white-space: nowrap;
+}
+button.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+#results {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+#results button {
+  width: 100%;
+  margin-top: 6px;
+  text-align: left;
+  white-space: normal;
+  font-size: 14px;
+}
+#nav-active {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+#nav-active[hidden] {
+  display: none;
+}
+#nav-dest {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.message {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--dim);
+}
+.message:empty {
+  display: none;
+}
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+}
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+.row select {
+  max-width: 60%;
+}
+input[type='checkbox'] {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--accent);
+}
+.note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--dim);
+}

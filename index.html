@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Drive HUD</title>
+    <link rel="stylesheet" href="./src/ui/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Drive HUD</h1>
+        <div class="pills">
+          <span id="pill-glasses" class="pill">글래스</span>
+          <span id="pill-gps" class="pill">GPS</span>
+        </div>
+      </header>
+
+      <canvas id="preview" aria-label="글래스 화면 미리보기"></canvas>
+
+      <section>
+        <h2>길 안내</h2>
+        <form id="search-form">
+          <input id="search-input" type="search" placeholder="목적지 검색" autocomplete="off" enterkeyhint="search" />
+          <button type="submit">검색</button>
+        </form>
+        <ul id="results"></ul>
+        <div id="nav-active" hidden>
+          <span id="nav-dest"></span>
+          <button id="nav-stop" type="button" class="danger">안내 종료</button>
+        </div>
+        <p id="nav-message" class="message"></p>
+      </section>
+
+      <section>
+        <h2>표시 설정</h2>
+        <label class="row">
+          <span>화면 구성</span>
+          <select id="set-mode">
+            <option value="full">전체 (속도 · 제한 · 길 안내)</option>
+            <option value="minimal">간단 (속도 · 제한)</option>
+            <option value="text">텍스트 (가장 빠른 갱신)</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>속도 단위</span>
+          <select id="set-unit">
+            <option value="kmh">km/h</option>
+            <option value="mph">mph</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>과속 경고 기준</span>
+          <select id="set-tolerance">
+            <option value="0">제한속도 초과 즉시</option>
+            <option value="5">+5 km/h</option>
+            <option value="10">+10 km/h</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>단속 카메라 알림</span>
+          <input id="set-camera" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>데모 주행 (GPS 없이 테스트)</span>
+          <input id="set-demo" type="checkbox" />
+        </label>
+      </section>
+
+      <p class="note">
+        글래스 터치패드: 한 번 탭 = 화면 구성 전환, 두 번 탭 = 종료.<br />
+        제한속도·단속 카메라는 OpenStreetMap 데이터 기준이라 실제와 다를 수 있습니다. 항상 도로 표지판을
+        우선하고, 주행 중에는 휴대폰을 조작하지 마세요.
+      </p>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
