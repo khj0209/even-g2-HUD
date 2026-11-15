@@ -1,9 +1,36 @@
-Drive HUD puts the essentials of a car head-up display on your G2 while you drive.
+# Drive HUD
 
-- Current speed from your phone's GPS
-- Speed-limit sign with an overspeed warning
-- Speed-camera alerts with distance
-- Turn-by-turn guidance: arrow, distance to the turn, road name and arrival time
-- Three layouts (full, minimal, text) — tap the touchpad to switch, double-tap to exit
+**운전에 필요한 정보만, 눈앞에.**
 
-Speed limits and cameras come from OpenStreetMap and may be missing or out of date. Always follow road signs, and do not operate your phone while driving.
+Drive HUD는 자동차 헤드업 디스플레이(HUD)처럼 현재 속도, 제한속도, 단속 카메라, 길 안내를 Even G2 글래스에 보여줍니다. 계기판이나 휴대폰을 내려다보지 않고 시선을 도로에 둔 채 확인할 수 있습니다.
+
+## 주요 기능
+
+- **현재 속도**: 휴대폰 GPS로 측정한 속도를 크게 표시합니다.
+- **제한속도와 과속 경고**: 도로의 제한속도를 표지 모양으로 보여주고, 넘으면 테두리로 알려줍니다. 경고 기준은 +0 / +5 / +10 km/h 중에서 고를 수 있습니다.
+- **단속 카메라 알림**: 앞쪽 단속 카메라를 남은 거리와 함께 알려줍니다.
+- **길 안내**: 휴대폰에서 목적지를 검색하면 회전 화살표, 남은 거리, 도로명, 도착 예정 시각을 보여줍니다.
+- **시계와 방위**: 현재 시각과 진행 방향을 표시합니다.
+
+## 화면 구성
+
+터치패드를 **한 번 탭**하면 화면이 바뀌고, **두 번 탭**하면 종료합니다.
+
+- **전체**: 모든 정보 표시
+- **간단**: 속도와 제한속도만
+- **텍스트**: 글자로만 표시해 갱신이 가장 빠름
+
+## 알아두세요
+
+- 제한속도와 단속 카메라는 OpenStreetMap 데이터라 일부 도로는 정보가 없거나 실제와 다를 수 있습니다.
+- 경로 계산과 목적지 검색을 위해 현재 위치가 OSRM, Nominatim 공개 서버로 전송됩니다.
+- 크루즈 설정 속도, 차로 유지 등 차량 내부 정보가 필요한 기능은 지원하지 않습니다.
+
+## 안전 안내
+
+Drive HUD는 참고용 도구입니다. 실제 도로 표지판과 교통 법규를 항상 우선하고, 주행 중에는 휴대폰을 조작하지 마세요.
+
+## 필요한 권한
+
+- **위치**: 속도, 진행 방향, 현재 위치를 읽습니다.
+- **네트워크**: 제한속도·단속 카메라를 조회하고 경로를 계산합니다.
