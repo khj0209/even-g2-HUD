@@ -33,7 +33,10 @@ const LAYOUTS: Record<DisplayMode, Box[]> = {
     { id: 4, name: 'speed', kind: 'image', x: 188, y: BAND_Y, w: 200, h: 100 },
     { id: 5, name: 'limit', kind: 'image', x: 388, y: BAND_Y, w: 120, h: 100 },
     // Fourth and last image container the glasses allow; sits above `info`, clear of the main cluster.
-    { id: 7, name: 'minimap', kind: 'image', x: SCREEN.w - 100 - 12, y: 12, w: 100, h: 100 },
+    // id 6 (not 7): reuses the id 'text' mode uses, since the two layouts are never active at once,
+    // keeping ids 1–6 contiguous — some IDs skipped straight to a non-contiguous 7 and never rendered
+    // on real hardware, which a contiguous, array-indexed container table on the device side would explain.
+    { id: 6, name: 'minimap', kind: 'image', x: SCREEN.w - 100 - 12, y: 12, w: 100, h: 100 },
   ],
   minimal: [
     EVENTS,
