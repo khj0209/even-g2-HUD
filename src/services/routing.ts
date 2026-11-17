@@ -149,6 +149,26 @@ const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const TMAP_ROUTE_URL = 'https://apis.openapi.sk.com/tmap/routes?version=1';
 const TMAP_POI_URL = 'https://apis.openapi.sk.com/tmap/pois';
 
+const FETCH_TIMEOUT_MS = 10000;
+
+/**
+ * A hung request (dead connection, a request the host's network layer never forwards, …) would
+ * otherwise leave the UI stuck on "경로 탐색 중…" forever, since a plain `fetch` has no timeout
+ * of its own. This fails it fast with a clear error instead.
+ */
+async function fetchTimed(fetchFn: typeof fetch, url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetchFn(url, { ...init, signal: controller.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw new Error('서버 응답이 없습니다 (시간 초과)');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Turn codes shared by Tmap's car/pedestrian guidance. Codes outside this map (lane-change,
  * crosswalk, waypoint markers, …) are dropped rather than guessed, since a wrong arrow on a
@@ -194,7 +214,7 @@ export function tmapToRoute(json: any): Route {
 
 export async function fetchRoute(from: LatLon, to: LatLon, apiKey = '', fetchFn: typeof fetch = fetch): Promise<Route> {
   if (apiKey) {
-    const res = await fetchFn(TMAP_ROUTE_URL, {
+    const res = await fetchTimed(fetchFn, TMAP_ROUTE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', appKey: apiKey },
       body: JSON.stringify({
@@ -212,7 +232,7 @@ export async function fetchRoute(from: LatLon, to: LatLon, apiKey = '', fetchFn:
     return tmapToRoute(await res.json());
   }
   const url = `${OSRM_URL}/${from.lon},${from.lat};${to.lon},${to.lat}?steps=true&overview=full&geometries=geojson`;
-  const res = await fetchFn(url);
+  const res = await fetchTimed(fetchFn, url);
   if (!res.ok) throw new Error(`경로 서버 오류 (HTTP ${res.status})`);
   return osrmToRoute(await res.json());
 }
@@ -232,7 +252,7 @@ export async function searchPlaces(
       params.set('centerLat', String(near.lat));
       params.set('radius', '20');
     }
-    const res = await fetchFn(`${TMAP_POI_URL}?${params}`, { headers: { appKey: apiKey, Accept: 'application/json' } });
+    const res = await fetchTimed(fetchFn, `${TMAP_POI_URL}?${params}`, { headers: { appKey: apiKey, Accept: 'application/json' } });
     if (!res.ok) throw new Error(`검색 서버 오류 (HTTP ${res.status})`);
     const json = await res.json();
     const pois: any[] = json?.searchPoiInfo?.pois?.poi ?? [];
@@ -247,7 +267,7 @@ export async function searchPlaces(
     const d = 0.5;
     params.set('viewbox', `${near.lon - d},${near.lat + d},${near.lon + d},${near.lat - d}`);
   }
-  const res = await fetchFn(`${NOMINATIM_URL}?${params}`);
+  const res = await fetchTimed(fetchFn, `${NOMINATIM_URL}?${params}`);
   if (!res.ok) throw new Error(`검색 서버 오류 (HTTP ${res.status})`);
   const json = await res.json();
   return (json as any[]).map((p) => ({ name: p.display_name, lat: parseFloat(p.lat), lon: parseFloat(p.lon) }));
