@@ -16,6 +16,24 @@ function canvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContex
 
 const FONT = 'system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif';
 
+/**
+ * Rounded-rect path via `arcTo`, not `ctx.roundRect` — the G2's WebView canvas engine is an
+ * unknown/older build and `roundRect` is recent enough (2021+) that it can't be assumed present.
+ */
+function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
 /** Large speed readout, centred, with the unit underneath; boxed when over the limit. */
 export function drawSpeed(speed: string, unit: string, over: boolean): HTMLCanvasElement {
   const [c, ctx] = canvas(200, 100);
@@ -27,8 +45,7 @@ export function drawSpeed(speed: string, unit: string, over: boolean): HTMLCanva
   ctx.fillText(unit, 100, 91);
   if (over) {
     ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.roundRect(3, 3, 194, 94, 14);
+    roundedRectPath(ctx, 3, 3, 194, 94, 14);
     ctx.stroke();
   }
   return c;
@@ -152,8 +169,7 @@ function arrow(ctx: CanvasRenderingContext2D, icon: ManeuverIcon): void {
 export function drawMinimap(mm: MinimapView | null): HTMLCanvasElement {
   const [c, ctx] = canvas(100, 100);
   ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.roundRect(2, 2, 96, 96, 14);
+  roundedRectPath(ctx, 2, 2, 96, 96, 14);
   ctx.stroke();
   if (!mm) return c;
 
