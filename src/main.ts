@@ -63,6 +63,7 @@ $<HTMLFormElement>('search-form').onsubmit = async (e) => {
 };
 
 app.onState((s: AppState) => {
+  $('map-status').textContent = s.mapStatus;
   lastPosition = s.position ?? lastPosition;
   $('pill-glasses').classList.toggle('on', s.glasses);
   $('pill-gps').classList.toggle('on', s.gps);

@@ -29,6 +29,8 @@ export interface AppState {
   position: LatLon | null;
   /** Human-readable navigation status / error for the phone page. */
   navMessage: string;
+  /** Map data status for the phone page. */
+  mapStatus: string;
 }
 
 export class App {
@@ -185,6 +187,7 @@ export class App {
       destination: this.destination,
       position: this.fix && { lat: this.fix.lat, lon: this.fix.lon },
       navMessage: this.navMessage,
+      mapStatus: this.settings.demo ? '지도: 데모 데이터' : `지도: ${this.roads.statusText()}`,
     };
     for (const fn of this.listeners) fn(state);
   }

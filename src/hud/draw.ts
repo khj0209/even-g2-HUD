@@ -166,13 +166,14 @@ function arrow(ctx: CanvasRenderingContext2D, icon: ManeuverIcon): void {
   arrowHead(ctx, pts[pts.length - 2], pts[pts.length - 1]);
 }
 
-// Grey levels: the G2 shows brightness. Buildings are the dimmest layer, then roads, then the
-// route at full brightness; the route also gets a dark casing so it separates from the roads it
-// runs along. Levels are kept well clear of black, which the glasses show as nothing at all.
-const BUILDING_FILL = '#141414';
-const BUILDING_EDGE = '#5a5a5a';
-const MINOR_ROAD = '#828282';
-const MAJOR_ROAD = '#b4b4b4';
+// Grey levels: the G2 shows brightness in 16 steps, and the lowest few are hard to see on the real
+// glasses (the simulator shows them brighter). Buildings are the dimmest layer but still well above
+// that floor, then roads, then the route at full brightness with a dark casing so it separates from
+// the roads it runs along. Outlines are whole pixels wide so they don't anti-alias into dim greys.
+const BUILDING_FILL = '#303030';
+const BUILDING_EDGE = '#7a7a7a';
+const MINOR_ROAD = '#9c9c9c';
+const MAJOR_ROAD = '#c8c8c8';
 
 function polyline(ctx: CanvasRenderingContext2D, points: MinimapPoint[]): void {
   ctx.beginPath();
@@ -192,7 +193,7 @@ export function drawMinimap(mm: MinimapView | null): HTMLCanvasElement {
   if (mm) {
     ctx.save();
     ctx.translate(w / 2, 68);
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 2;
     for (const b of mm.buildings) {
       ctx.beginPath();
       ctx.moveTo(b[0].x, b[0].y);

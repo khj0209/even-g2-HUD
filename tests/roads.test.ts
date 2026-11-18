@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Fix } from '../src/core/types';
-import { buildBuildingQuery, buildQuery, parseBuildings, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
+import { buildBuildingQuery, buildQuery, parseBuildings, RoadDataService, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
 
 const fix = (lat: number, lon: number, heading: number | null): Fix => ({ lat, lon, heading, speed: 15, ts: 0 });
 
@@ -115,5 +115,35 @@ describe('cameraAhead', () => {
     expect(cameraAhead(data, fix(37.5, 127.001, 270))).toBeNull();
     expect(cameraAhead(data, fix(37.5, 127.001, null))).toBeNull();
     expect(cameraAhead(data, fix(37.5, 126.99, 90))).toBeNull(); // too far
+  });
+});
+
+describe('RoadDataService status', () => {
+  const fix = { lat: 37.5, lon: 127, speed: 10, heading: 0, ts: 0 };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('reports counts once both downloads arrive', async () => {
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      const body = decodeURIComponent(String(init.body));
+      const elements = body.includes('[building]')
+        ? [{ type: 'way', geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }, { lat: 1, lon: 1 }] }]
+        : [{ type: 'way', tags: { highway: 'primary' }, geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }] }];
+      return new Response(JSON.stringify({ elements }));
+    }) as typeof fetch;
+    const svc = new RoadDataService(fetchFn);
+    expect(svc.statusText()).toBe('도로 대기 · 건물 대기');
+    svc.update(fix);
+    expect(svc.statusText()).toBe('도로 받는 중 · 건물 받는 중');
+    await flush();
+    await flush();
+    expect(svc.statusText()).toBe('도로 1 · 건물 1');
+  });
+
+  it('shows the error when a download fails', async () => {
+    const svc = new RoadDataService((async () => new Response('', { status: 429 })) as typeof fetch);
+    svc.update(fix);
+    await flush();
+    await flush();
+    expect(svc.statusText()).toBe('도로 오류: Overpass HTTP 429 · 건물 오류: Overpass HTTP 429');
   });
 });

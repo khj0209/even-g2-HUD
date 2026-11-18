@@ -141,6 +141,9 @@ class AreaFetcher<T> {
   private center: LatLon | null = null;
   private busy = false;
   private retryAt = 0;
+  /** For the phone page: what happened to the last request. */
+  status: 'idle' | 'loading' | 'ok' | 'error' = 'idle';
+  error = '';
 
   constructor(
     private name: string,
@@ -155,6 +158,7 @@ class AreaFetcher<T> {
     if (this.busy || Date.now() < this.retryAt) return;
     if (this.center && distance(this.center, fix) < this.refetchDist) return;
     this.busy = true;
+    if (this.status !== 'ok') this.status = 'loading';
     const center = { lat: fix.lat, lon: fix.lon };
     // Without a timeout a hung request would leave `busy` set forever and the data would never refresh.
     this.fetchFn(OVERPASS_URL, {
@@ -170,9 +174,14 @@ class AreaFetcher<T> {
       .then((json) => {
         this.onData(this.parse(json));
         this.center = center;
+        this.status = 'ok';
+        this.error = '';
       })
       .catch((e) => {
         console.warn(`[${this.name}]`, e);
+        // Keep showing the last good data; just note that the refresh failed.
+        if (this.status !== 'ok') this.status = 'error';
+        this.error = e instanceof Error ? e.message : String(e);
         this.retryAt = Date.now() + 15000;
       })
       .finally(() => (this.busy = false));
@@ -196,6 +205,22 @@ export class RoadDataService {
     this.buildings = new AreaFetcher('buildings', buildBuildingQuery, parseBuildings, BUILDING_REFETCH_DIST, (b) => {
       this.data = { ...this.data, buildings: b };
     }, fetchFn);
+  }
+
+  /** One line for the phone page, e.g. "도로 120 · 건물 340", so missing map data can be diagnosed. */
+  statusText(): string {
+    const part = (label: string, f: { status: string; error: string }, count: number) =>
+      f.status === 'ok'
+        ? `${label} ${count}${f.error ? ' (갱신 오류)' : ''}`
+        : f.status === 'loading'
+          ? `${label} 받는 중`
+          : f.status === 'error'
+            ? `${label} 오류: ${f.error}`
+            : `${label} 대기`;
+    return [
+      part('도로', this.roads, this.data.map.length),
+      part('건물', this.buildings, this.data.buildings.length),
+    ].join(' · ');
   }
 
   /** Call on every fix; cheap unless a refetch is due. */
