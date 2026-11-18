@@ -6,7 +6,7 @@ const GREEN = '#35f06a';
 /** Draws the HUD onto a canvas in the phone page, approximating the glasses' green display. */
 export class PreviewSink implements HudSink {
   private boxes: Box[] = [];
-  private texts = new Map<number, string>();
+  private texts = new Map<number, { content: string; level: number }>();
   private images = new Map<number, HTMLCanvasElement>();
   private ctx: CanvasRenderingContext2D;
 
@@ -23,8 +23,8 @@ export class PreviewSink implements HudSink {
     this.paint();
   }
 
-  setText(box: Box, content: string): void {
-    this.texts.set(box.id, content);
+  setText(box: Box, content: string, level: number): void {
+    this.texts.set(box.id, { content, level });
     this.paint();
   }
 
@@ -41,9 +41,11 @@ export class PreviewSink implements HudSink {
     for (const box of this.boxes) {
       const image = this.images.get(box.id);
       if (image) ctx.drawImage(image, box.x, box.y);
-      const text = this.texts.get(box.id);
-      if (!text) continue;
-      ctx.fillStyle = '#fff';
+      const t = this.texts.get(box.id);
+      if (!t) continue;
+      const text = t.content;
+      const g = Math.round(80 + (175 * t.level) / 4);
+      ctx.fillStyle = `rgb(${g},${g},${g})`;
       ctx.font = '22px system-ui, sans-serif';
       ctx.textBaseline = 'top';
       text.split('\n').forEach((line, i) => ctx.fillText(line, box.x + 4, box.y + 6 + i * 30, box.w - 8));

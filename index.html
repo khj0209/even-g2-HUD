@@ -31,6 +31,32 @@
           <button id="nav-stop" type="button" class="danger">안내 종료</button>
         </div>
         <p id="nav-message" class="message"></p>
+        <div class="favorites">
+          <div class="row">
+            <span>집 <small id="home-name" class="dim">미등록</small></span>
+            <span class="buttons-inline">
+              <button id="home-go" type="button">안내</button>
+              <button id="home-clear" type="button" class="danger">지우기</button>
+            </span>
+          </div>
+          <div class="row">
+            <span>회사 <small id="work-name" class="dim">미등록</small></span>
+            <span class="buttons-inline">
+              <button id="work-go" type="button">안내</button>
+              <button id="work-clear" type="button" class="danger">지우기</button>
+            </span>
+          </div>
+        </div>
+        <p class="note">검색 결과의 "집"·"회사" 버튼으로 등록합니다. 글래스 메뉴의 "집으로"·"회사로"·"안내 종료"로 휴대폰을 만지지 않고 안내를 시작하거나 끝낼 수 있습니다.</p>
+      </section>
+
+      <section>
+        <h2>주행 기록</h2>
+        <p id="trip-current" class="message"></p>
+        <ul id="trip-list" class="trips"></ul>
+        <div class="buttons">
+          <button id="trip-clear" type="button" class="danger">기록 지우기</button>
+        </div>
       </section>
 
       <section>
@@ -68,6 +94,14 @@
       <section>
         <h2>표시 설정</h2>
         <label class="row">
+          <span>야간 밝기</span>
+          <select id="set-night">
+            <option value="auto">자동 (해 지면 어둡게)</option>
+            <option value="day">항상 밝게</option>
+            <option value="night">항상 어둡게</option>
+          </select>
+        </label>
+        <label class="row">
           <span>속도 단위</span>
           <select id="set-unit">
             <option value="kmh">km/h</option>
@@ -90,6 +124,23 @@
           <span>데모 주행 (GPS 없이 테스트)</span>
           <input id="set-demo" type="checkbox" />
         </label>
+      </section>
+
+      <section>
+        <h2>졸음 감지 (실험)</h2>
+        <label class="row">
+          <span>졸음 감지</span>
+          <input id="set-drowsy" type="checkbox" />
+        </label>
+        <p id="drowsy-status" class="message"></p>
+        <div class="buttons">
+          <button id="drowsy-calibrate" type="button">보정하기</button>
+        </div>
+        <p class="note">
+          글래스 움직임 센서로 고개가 떨어지는 것을 감지해 "졸음 주의"를 띄웁니다. 처음에 차를 세운 상태에서
+          정면을 보고 "보정하기"를 누른 뒤 4초 안에 고개를 두 번 끄덕이세요. 실험 기능이라 놓치거나 잘못 울릴 수
+          있으니 졸리면 반드시 쉬어 가세요.
+        </p>
       </section>
 
       <p class="note">

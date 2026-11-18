@@ -48,12 +48,25 @@ describe('buildView', () => {
     );
     expect(v.nav).toEqual({ icon: 'left', dist: '350 m' });
     expect(v.info).toBe('테헤란로  12 km · 14:32 도착');
-    expect(v.alert).toBe('단속 300 m');
+    expect(v.alert).toBe('단속\n300 m');
   });
 
   it('falls back to the camera limit on roads with no tagged limit', () => {
     const v = buildView(input({ limit: null, camera: { dist: 280, limit: 50 } }));
     expect(v).toMatchObject({ limit: 50, over: true });
+  });
+
+  it('labels signal and section cameras, and shows the section average', () => {
+    expect(buildView(input({ camera: { dist: 280, limit: null, kind: 3 } })).alert).toBe('신호단속\n300 m');
+    expect(buildView(input({ camera: { dist: 280, limit: 100, kind: 1 } })).alert).toBe('구간단속\n300 m');
+    const v = buildView(input({ section: { limit: 80, avgKmh: 86, remaining: 2100 }, camera: { dist: 280, limit: 80, kind: 2 } }));
+    expect(v.alert).toBe('구간 2.1 km\n평균 86 !');
+    expect(v.sectionOver).toBe(true);
+    expect(buildView(input({ section: { limit: 80, avgKmh: 74, remaining: null } })).alert).toBe('구간단속\n평균 74');
+  });
+
+  it('shows a flash message in the info line', () => {
+    expect(buildView(input({ flash: '안내를 종료했습니다' })).info).toBe('안내를 종료했습니다');
   });
 
   it('hides camera alerts when disabled', () => {

@@ -307,6 +307,16 @@ export function drawOverview(ov: OverviewView | null): HTMLCanvasElement {
   return c;
 }
 
+/** Night: scale every grey level down to about half brightness. */
+export function dimCanvas(c: HTMLCanvasElement): void {
+  const ctx = c.getContext('2d')!;
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = '#8a8a8a';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.restore();
+}
+
 /** Encode a canvas as PNG bytes for `updateImageRawData`. */
 export function pngBytes(c: HTMLCanvasElement): Promise<number[]> {
   return new Promise((resolve, reject) =>

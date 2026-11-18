@@ -11,6 +11,10 @@ export interface RoadWay {
 export interface Camera extends LatLon {
   id?: number;
   maxspeed: number | null;
+  /** CAM_* from tileformat; a plain speed camera if absent. */
+  kind?: number;
+  /** Section length in metres at a section start. */
+  section?: number;
 }
 
 /** Any drivable road, for drawing the minimap. */
@@ -115,7 +119,7 @@ export function cameraAhead(data: RoadData, fix: Fix): CameraAlert | null {
     const dist = distance(fix, cam);
     if (dist > CAMERA_ALERT_DIST || dist < 15) continue;
     if (Math.abs(angleDiff(fix.heading, bearing(fix, cam))) > CAMERA_CONE) continue;
-    if (!best || dist < best.dist) best = { dist, limit: cam.maxspeed };
+    if (!best || dist < best.dist) best = { dist, limit: cam.maxspeed, kind: cam.kind ?? 0 };
   }
   return best;
 }
@@ -133,7 +137,7 @@ export class CameraTracker {
       const off = fix.heading == null ? 0 : Math.abs(angleDiff(fix.heading, bearing(fix, this.cam)));
       // Passed (now behind us), turned away, or out of range: let it go.
       if (dist < 15 || off > 100 || dist > CAMERA_ALERT_DIST + 150) this.cam = null;
-      else return { dist, limit: this.cam.maxspeed };
+      else return { dist, limit: this.cam.maxspeed, kind: this.cam.kind ?? 0 };
     }
     const found = cameraAhead(data, fix);
     if (!found) return null;

@@ -1,9 +1,11 @@
 import type { EvenAppBridge } from '@evenrealities/even_hub_sdk';
-import { DEFAULT_SETTINGS, type Fix, type LatLon, type NavProgress, type Settings } from './core/types';
-import { GlassesSink } from './hud/glasses';
+import { isDark } from './core/sun';
+import { DEFAULT_SETTINGS, type Fix, type LatLon, type NavProgress, type SavedPlace, type Settings } from './core/types';
+import { GlassesSink, type GlassesMenuItem } from './hud/glasses';
 import { HudRenderer, type HudSink } from './hud/renderer';
 import { buildView, LimitFilter, type HudView } from './hud/view';
 import { demoRoadData, demoRoute } from './services/demo';
+import { DrowsinessDetector, DrowsyCalibrator } from './services/drowsiness';
 import {
   BridgeLocationSource,
   BrowserLocationSource,
@@ -13,7 +15,9 @@ import {
 } from './services/location';
 import { deadReckon, DR_START_MS, MapMatcher, type PathRef } from './services/matching';
 import { RoadDataService } from './services/mapcache';
+import { SectionTracker } from './services/section';
 import { TmapLimitService } from './services/tmaplimit';
+import { MAX_TRIPS, TripRecorder, type Trip } from './services/trip';
 import { CameraTracker, matchLimit, type RoadData } from './services/roads';
 import { fetchRoute, RouteTracker, type Place } from './services/routing';
 
@@ -25,6 +29,18 @@ const HOLD_MS = 60000;
 /** Keep showing the last turn instruction this long through a gap in guidance. */
 const NAV_HOLD_MS = 15000;
 const REROUTE_INTERVAL_MS = 10000;
+const TRIPS_KEY = 'drivehud.trips';
+/** While guiding with Tmap, look for a faster route (traffic) this often. */
+const TRAFFIC_CHECK_MS = 5 * 60 * 1000;
+/** Switch only for a real gain: at least 3 minutes and 10% of the time left. */
+const TRAFFIC_MIN_SAVING_S = 180;
+const CALIBRATION_MS = 4000;
+
+const MENU: GlassesMenuItem[] = [
+  { id: 1, name: '집으로' },
+  { id: 2, name: '회사로' },
+  { id: 3, name: '안내 종료' },
+];
 
 export interface AppState {
   view: HudView;
@@ -38,6 +54,10 @@ export interface AppState {
   navMessage: string;
   /** Map data status for the phone page. */
   mapStatus: string;
+  currentTrip: Trip | null;
+  trips: Trip[];
+  /** Drowsiness warning status for the phone page. */
+  drowsyStatus: string;
 }
 
 export class App {
@@ -64,6 +84,15 @@ export class App {
   private navMessage = '';
   private fix: Fix | null = null;
   private lastReroute = 0;
+  private trips: Trip[] = [];
+  private tripRecorder = new TripRecorder((t) => this.saveTrip(t));
+  private section = new SectionTracker();
+  private flashMsg: { text: string; until: number } | null = null;
+  private lastTrafficCheck = 0;
+  private trafficBusy = false;
+  private drowsy: DrowsinessDetector | null = null;
+  private calibrator: DrowsyCalibrator | null = null;
+  private imu = { count: 0, since: 0, last: [0, 0, 0] as number[] };
   private listeners: ((s: AppState) => void)[] = [];
 
   /** `forceDemo` pins demo mode on regardless of saved settings (the `?demo` URL flag). */
@@ -73,6 +102,7 @@ export class App {
   ) {
     this.renderer.addSink(preview);
     this.loadSettings(localStorage.getItem(SETTINGS_KEY));
+    this.loadTrips(localStorage.getItem(TRIPS_KEY));
   }
 
   start(): void {
@@ -86,11 +116,19 @@ export class App {
   async attachBridge(bridge: EvenAppBridge): Promise<void> {
     this.bridge = bridge;
     this.loadSettings(await bridge.getLocalStorage(SETTINGS_KEY).catch(() => ''));
-    this.glasses = new GlassesSink(bridge, {
-      onDoubleClick: () => this.glasses?.exit(),
-      onResume: () => this.renderer.redraw(),
-    });
+    this.loadTrips(await bridge.getLocalStorage(TRIPS_KEY).catch(() => ''));
+    this.glasses = new GlassesSink(
+      bridge,
+      {
+        onDoubleClick: () => this.glasses?.exit(),
+        onResume: () => this.renderer.redraw(),
+        onMenu: (id) => this.onMenu(id),
+        onImu: (v) => this.onImu(v),
+      },
+      MENU,
+    );
     this.renderer.addSink(this.glasses);
+    this.applyDrowsy();
     this.restartLocation();
     this.tick();
   }
@@ -102,6 +140,7 @@ export class App {
   updateSettings(patch: Partial<Settings>): void {
     const demoChanged = patch.demo != null && patch.demo !== this.settings.demo;
     this.settings = { ...this.settings, ...patch };
+    if (patch.drowsy) this.applyDrowsy();
     const json = JSON.stringify(this.settings);
     localStorage.setItem(SETTINGS_KEY, json);
     void this.bridge?.setLocalStorage(SETTINGS_KEY, json);
@@ -122,14 +161,151 @@ export class App {
     try {
       this.tracker = new RouteTracker(await fetchRoute(this.fix, place, this.settings.tmapApiKey));
       this.navMessage = '';
+      this.lastTrafficCheck = Date.now();
       // Fetch the map along the whole route now, while there's signal, so tunnels and server
       // hiccups on the way don't leave gaps.
       this.roads.prefetchRoute(this.tracker.route.points);
     } catch (e) {
       this.tracker = null;
       this.navMessage = e instanceof Error ? e.message : String(e);
+      this.flash(this.navMessage);
     }
     this.tick();
+  }
+
+  /** Save a search result as home or work, for the glasses menu. */
+  savePlace(which: 'home' | 'work', place: SavedPlace | null): void {
+    this.updateSettings({ [which]: place && { name: place.name, lat: place.lat, lon: place.lon } });
+  }
+
+  /** The glasses' menu: start guidance home / to work, or stop guiding, without touching the phone. */
+  private onMenu(id: number): void {
+    if (id === 3) {
+      this.stopNavigation();
+      this.flash('안내를 종료했습니다');
+      return;
+    }
+    const place = id === 1 ? this.settings.home : id === 2 ? this.settings.work : null;
+    const [object, toward] = id === 1 ? ['집을', '집으로'] : ['회사를', '회사로'];
+    if (!place) this.flash(`휴대폰에서 ${object} 먼저 등록하세요`);
+    else {
+      this.flash(`${toward} 경로 탐색 중…`);
+      void this.navigateTo(place);
+    }
+  }
+
+  /** Show a short message in the glasses' info line for a while. */
+  private flash(text: string, ms = 4000): void {
+    this.flashMsg = { text, until: Date.now() + ms };
+    this.tick();
+  }
+
+  // --- Trips ----------------------------------------------------------------------------------
+
+  private loadTrips(json: string | null): void {
+    try {
+      if (json) this.trips = JSON.parse(json);
+    } catch {
+      /* keep what we have */
+    }
+  }
+
+  private saveTrip(t: Trip): void {
+    this.trips = [t, ...this.trips].slice(0, MAX_TRIPS);
+    this.storeTrips();
+  }
+
+  /** The page is going away: close the trip in progress so it's kept. */
+  shutdown(): void {
+    this.tripRecorder.finish();
+  }
+
+  clearTrips(): void {
+    this.trips = [];
+    this.storeTrips();
+    this.tick();
+  }
+
+  private storeTrips(): void {
+    const json = JSON.stringify(this.trips);
+    localStorage.setItem(TRIPS_KEY, json);
+    void this.bridge?.setLocalStorage(TRIPS_KEY, json);
+  }
+
+  // --- Drowsiness (experimental) -----------------------------------------------------------------
+
+  /** Turn the glasses' motion sensor on while it's needed (warning enabled, or calibrating). */
+  private applyDrowsy(): void {
+    const { enabled, cal } = this.settings.drowsy;
+    this.drowsy = enabled && cal ? new DrowsinessDetector(cal) : null;
+    void this.glasses?.setImu(!!this.drowsy || !!this.calibrator);
+  }
+
+  /** Parked, the wearer looks ahead, presses this and nods twice within 4 seconds. */
+  calibrateDrowsy(): void {
+    if (!this.glasses) {
+      this.navMessage = '글래스가 연결되어 있어야 보정할 수 있습니다';
+      this.tick();
+      return;
+    }
+    this.calibrator = new DrowsyCalibrator();
+    this.applyDrowsy();
+    this.flash('고개를 두 번 끄덕이세요', CALIBRATION_MS);
+    setTimeout(() => {
+      const cal = this.calibrator?.finish() ?? null;
+      this.calibrator = null;
+      this.navMessage = cal ? '졸음 감지 보정 완료' : '보정 실패: 글래스 움직임 센서 값이 오지 않았습니다';
+      if (cal) this.updateSettings({ drowsy: { ...this.settings.drowsy, cal } });
+      else this.applyDrowsy();
+      this.tick();
+    }, CALIBRATION_MS);
+  }
+
+  private onImu(v: [number, number, number]): void {
+    const now = Date.now();
+    if (now - this.imu.since > 5000) this.imu = { count: 0, since: now, last: v };
+    this.imu.count++;
+    this.imu.last = v;
+    if (this.calibrator) {
+      this.calibrator.add(v);
+      return;
+    }
+    const kmh = (this.fix?.speed ?? 0) * 3.6;
+    if (this.drowsy?.sample(v, now, kmh)) {
+      this.flash('졸음 주의 · 쉬어 가세요', 10000);
+      navigator.vibrate?.([400, 200, 400]);
+    }
+  }
+
+  private drowsyStatus(): string {
+    const { enabled, cal } = this.settings.drowsy;
+    if (this.calibrator) return `보정 중… (센서 값 ${this.calibrator.count}개)`;
+    const rate = this.imu.since ? (this.imu.count / Math.max(1, (Date.now() - this.imu.since) / 1000)).toFixed(1) : '0';
+    const live = this.drowsy ? ` · 센서 ${rate}회/초 [${this.imu.last.map((x) => x.toFixed(2)).join(', ')}]` : '';
+    if (!cal) return '보정 필요';
+    return `${enabled ? '켜짐' : '꺼짐'} · 축 ${'xyz'[cal.axis]}${live}`;
+  }
+
+  // --- Traffic -----------------------------------------------------------------------------------
+
+  /** With Tmap, look for a faster route every few minutes and switch if it saves real time. */
+  private checkFasterRoute(fix: Fix, nav: NavProgress | null): void {
+    const now = Date.now();
+    if (!this.tracker || !this.destination || !nav || fix.estimated || this.settings.demo) return;
+    if (!this.settings.tmapApiKey || this.trafficBusy || now - this.lastTrafficCheck < TRAFFIC_CHECK_MS) return;
+    this.lastTrafficCheck = now;
+    this.trafficBusy = true;
+    const dest = this.destination;
+    fetchRoute(fix, dest, this.settings.tmapApiKey)
+      .then((route) => {
+        const saving = nav.remainingTime - route.duration;
+        if (this.destination !== dest || saving < TRAFFIC_MIN_SAVING_S || saving < 0.1 * nav.remainingTime) return;
+        this.tracker = new RouteTracker(route);
+        this.roads.prefetchRoute(route.points);
+        this.flash(`더 빠른 길로 변경 · ${Math.round(saving / 60)}분 단축`, 8000);
+      })
+      .catch((e) => console.warn('[traffic]', e))
+      .finally(() => (this.trafficBusy = false));
   }
 
   /** Download the map within 3 km of the current position for later use. */
@@ -169,6 +345,8 @@ export class App {
     this.lastRef = null;
     this.cameras = new CameraTracker();
     this.lastNav = null;
+    this.tripRecorder.finish();
+    this.section = new SectionTracker();
     this.limitFilter = new LimitFilter();
     this.roads = new RoadDataService();
     this.tracker = null;
@@ -253,7 +431,28 @@ export class App {
     const t = now.getTime();
     if (nav) this.lastNav = { nav, at: t };
     else if (this.tracker && this.lastNav && t - this.lastNav.at < NAV_HOLD_MS) nav = this.lastNav.nav;
-    const view = buildView({ fix, limit, camera, nav, route: this.tracker?.route ?? null, roads: this.roads.data, settings: this.settings, now });
+    let section = null;
+    if (fix) {
+      this.tripRecorder.update(fix);
+      section = this.section.update(fix, this.tripRecorder.odometer, this.roads.data);
+      if (!fix.estimated) this.checkFasterRoute(fix, nav);
+    }
+    const flash = this.flashMsg && this.flashMsg.until > t ? this.flashMsg.text : null;
+    const where = fix ?? this.fix ?? { lat: 37.5, lon: 127 };
+    const dim = this.settings.nightMode === 'night' || (this.settings.nightMode === 'auto' && isDark(now, where));
+    const view = buildView({
+      fix,
+      limit,
+      camera,
+      nav,
+      route: this.tracker?.route ?? null,
+      roads: this.roads.data,
+      section,
+      flash,
+      dim,
+      settings: this.settings,
+      now,
+    });
     this.renderer.render(view);
     const state: AppState = {
       view,
@@ -263,6 +462,9 @@ export class App {
       destination: this.destination,
       position: this.fix && { lat: this.fix.lat, lon: this.fix.lon },
       navMessage: this.navMessage,
+      currentTrip: this.tripRecorder.current,
+      trips: this.trips,
+      drowsyStatus: this.drowsyStatus(),
       mapStatus: this.settings.demo
         ? '지도: 데모 데이터'
         : `지도: ${this.roads.statusText()}${this.settings.tmapApiKey ? ` · ${this.tmapLimits.statusText()}` : ''}`,

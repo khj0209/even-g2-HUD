@@ -248,6 +248,8 @@ export async function fetchRoute(from: LatLon, to: LatLon, apiKey = '', fetchFn:
         reqCoordType: 'WGS84GEO',
         resCoordType: 'WGS84GEO',
         searchOption: '0',
+        // Current traffic in the route and its duration, so ETAs and the faster-route check use it.
+        trafficInfo: 'Y',
         sort: 'index',
       }),
     });

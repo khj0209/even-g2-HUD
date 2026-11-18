@@ -110,8 +110,40 @@ export interface BundledWay {
   points: LatLon[];
 }
 
+/** Camera kinds. */
+export const CAM_SPEED = 0;
+export const CAM_SECTION_START = 1;
+export const CAM_SECTION_END = 2;
+export const CAM_SIGNAL = 3;
+
 export interface BundledCamera extends LatLon {
   maxspeed: number | null;
+  /** CAM_*; speed camera if absent. */
+  kind?: number;
+  /** Section enforcement length in metres, at a section start (0 if unknown). */
+  section?: number;
+}
+
+/**
+ * One row of the national speed camera dataset (공공데이터포털 "전국무인교통단속카메라표준데이터",
+ * OpenAPI field names). regltSctnLcSe marks section-enforcement start/end; a camera without a
+ * speed limit (lmttVe 0) enforces signals only.
+ */
+export function parseOfficialCamera(r: Record<string, unknown>): BundledCamera | null {
+  const lat = parseFloat(String(r.latitude ?? ''));
+  const lon = parseFloat(String(r.longitude ?? ''));
+  if (!(lat > 33 && lat < 39 && lon > 124 && lon < 132)) return null;
+  const v = parseFloat(String(r.lmttVe ?? ''));
+  const maxspeed = v > 0 ? Math.round(v) : null;
+  const where = String(r.regltSctnLcSe ?? '').trim();
+  let kind = CAM_SPEED;
+  if (/^(1|시점|시작)/.test(where)) kind = CAM_SECTION_START;
+  else if (/^(2|종점|끝)/.test(where)) kind = CAM_SECTION_END;
+  else if (!maxspeed) kind = CAM_SIGNAL;
+  const len = parseFloat(String(r.ovrspdRegltSctnLt ?? ''));
+  // Given in km in most rows; treat large numbers as metres.
+  const section = kind === CAM_SECTION_START && len > 0 ? Math.round(len < 100 ? len * 1000 : len) : 0;
+  return { lat, lon, maxspeed, kind, section };
 }
 
 /**
@@ -119,7 +151,11 @@ export interface BundledCamera extends LatLon {
  * flags: 1 = drivable, 2 = major road.
  */
 export const encodeWay = (w: BundledWay) => [(w.drivable ? 1 : 0) | (w.major ? 2 : 0), w.maxspeed, encodePoints(w.points)];
-export const encodeCamera = (c: BundledCamera) => [Math.round(c.lat * SCALE), Math.round(c.lon * SCALE), c.maxspeed ?? 0];
+export const encodeCamera = (c: BundledCamera) => {
+  const row = [Math.round(c.lat * SCALE), Math.round(c.lon * SCALE), c.maxspeed ?? 0];
+  if (c.kind || c.section) row.push(c.kind ?? 0, c.section ?? 0);
+  return row;
+};
 
 export function encodeTile(ways: BundledWay[], cameras: BundledCamera[]): string {
   return JSON.stringify({ w: ways.map(encodeWay), c: cameras.map(encodeCamera) });
@@ -132,6 +168,12 @@ export function decodeTile(json: any): { ways: BundledWay[]; cameras: BundledCam
     maxspeed: s,
     points: decodePoints(p),
   }));
-  const cameras: BundledCamera[] = (json?.c ?? []).map(([l, o, s]: number[]) => ({ lat: l / SCALE, lon: o / SCALE, maxspeed: s || null }));
+  const cameras: BundledCamera[] = (json?.c ?? []).map(([l, o, s, kind = 0, section = 0]: number[]) => ({
+    lat: l / SCALE,
+    lon: o / SCALE,
+    maxspeed: s || null,
+    kind,
+    section,
+  }));
   return { ways, cameras };
 }

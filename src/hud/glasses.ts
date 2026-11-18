@@ -3,6 +3,9 @@ import {
   ImageContainerProperty,
   ImageRawDataUpdate,
   ImageRawDataUpdateResult,
+  ImuReportPace,
+  MenuContainerProperty,
+  MenuItemProperty,
   OsEventTypeList,
   RebuildPageContainer,
   StartUpPageCreateResult,
@@ -25,6 +28,16 @@ export interface GlassesEvents {
   onDoubleClick(): void;
   /** The glasses page came (back) to the foreground and needs repainting. */
   onResume(): void;
+  /** An item of the glasses' menu was chosen (its id from `menu`). */
+  onMenu?(itemID: number): void;
+  /** One motion-sensor sample, while enabled with setImu(true). */
+  onImu?(v: [number, number, number]): void;
+}
+
+export interface GlassesMenuItem {
+  id: number;
+  /** At most 32 bytes of UTF-8. */
+  name: string;
 }
 
 /**
@@ -36,7 +49,7 @@ export interface GlassesEvents {
  */
 export class GlassesSink implements HudSink {
   private layout: Box[] | null = null;
-  private texts = new Map<number, { box: Box; content: string }>();
+  private texts = new Map<number, { box: Box; content: string; level: number }>();
   private images = new Map<number, { box: Box; image: HTMLCanvasElement }>();
   private created = false;
   private pumping = false;
@@ -44,8 +57,18 @@ export class GlassesSink implements HudSink {
   constructor(
     private bridge: EvenAppBridge,
     events: GlassesEvents,
+    private menu: GlassesMenuItem[] = [],
   ) {
     bridge.onEvenHubEvent((e) => {
+      if (e.menuItemClickEvent?.itemID != null) {
+        events.onMenu?.(e.menuItemClickEvent.itemID);
+        return;
+      }
+      const imu = e.sysEvent?.eventType === OsEventTypeList.IMU_DATA_REPORT ? e.sysEvent.imuData : null;
+      if (imu) {
+        events.onImu?.([imu.x ?? 0, imu.y ?? 0, imu.z ?? 0]);
+        return;
+      }
       const ev = e.textEvent ?? e.sysEvent ?? e.listEvent;
       if (!ev) return;
       // The host omits zero-valued fields, so a missing eventType means CLICK_EVENT (0).
@@ -62,14 +85,19 @@ export class GlassesSink implements HudSink {
     void this.pump();
   }
 
-  setText(box: Box, content: string): void {
-    this.texts.set(box.id, { box, content });
+  setText(box: Box, content: string, level: number): void {
+    this.texts.set(box.id, { box, content, level });
     void this.pump();
   }
 
   setImage(box: Box, image: HTMLCanvasElement): void {
     this.images.set(box.id, { box, image });
     void this.pump();
+  }
+
+  /** Turn the glasses' motion sensor reports on or off. */
+  setImu(on: boolean): Promise<boolean> {
+    return this.bridge.imuControl(on, ImuReportPace.P100).catch(() => false);
   }
 
   /** Close the HUD on the glasses, letting the system confirm with the wearer. */
@@ -91,10 +119,10 @@ export class GlassesSink implements HudSink {
           // driver looks for first, so it should never wait behind a text update.
           await this.sendImage(SPEED_ID);
         } else if (this.texts.size) {
-          const [id, { box, content }] = this.texts.entries().next().value!;
+          const [id, { box, content, level }] = this.texts.entries().next().value!;
           this.texts.delete(id);
           await this.bridge.textContainerUpgrade(
-            new TextContainerUpgrade({ containerID: box.id, containerName: box.name, content }),
+            new TextContainerUpgrade({ containerID: box.id, containerName: box.name, content, textColor: level }),
           );
         } else if (this.images.size) {
           // Most important image first, so the speed never waits behind the minimap.
@@ -130,6 +158,11 @@ export class GlassesSink implements HudSink {
     });
     const page = {
       containerTotalNum: boxes.length,
+      menuObject: this.menu.length
+        ? new MenuContainerProperty({
+            menuItems: this.menu.map((m) => new MenuItemProperty({ itemID: m.id, itemName: m.name })),
+          })
+        : undefined,
       textObject: boxes.flatMap((b, z) =>
         b.kind === 'text'
           ? [new TextContainerProperty({ ...base(b, z), content: ' ', isEventCapture: b.capture ? 1 : 0 })]

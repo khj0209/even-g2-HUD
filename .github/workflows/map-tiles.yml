@@ -3,7 +3,9 @@ name: Build Korean map tiles
 # Cuts roads, speed limits and speed cameras for South Korea out of the OpenStreetMap extract and
 # publishes them on GitHub Pages, where the app fetches them before falling back to the public
 # Overpass servers (see src/services/mapcache.ts). Needs Pages enabled with "GitHub Actions" as
-# the source (repository Settings → Pages).
+# the source (repository Settings → Pages). With the DATA_GO_KR_KEY secret (a 공공데이터포털 service
+# key with the 전국무인교통단속카메라표준데이터 API applied for), the official speed cameras replace
+# OpenStreetMap's.
 on:
   workflow_dispatch:
   schedule:
@@ -46,9 +48,15 @@ jobs:
             --geometry-types=point,linestring -o roads.geojsonseq
           ls -la roads.osm.pbf roads.geojsonseq
 
+      # Optional: the national speed camera dataset, if the DATA_GO_KR_KEY secret is set.
+      - name: Download official speed cameras
+        env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: node scripts/fetch-cameras.ts cameras.json
+
       - name: Cut into tiles
         run: |
-          node --max-old-space-size=12000 scripts/build-tiles.ts roads.geojsonseq site "$(cat built.txt)"
+          node --max-old-space-size=12000 scripts/build-tiles.ts roads.geojsonseq site "$(cat built.txt)" cameras.json
           du -sh site
           find site -type f | wc -l
 

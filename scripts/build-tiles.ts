@@ -1,14 +1,18 @@
 // Cuts the roads, speed limits and speed cameras of an OpenStreetMap extract into the app's ~1.1 km
 // tiles. Input: GeoJSON sequence from `osmium export` (see .github/workflows/map-tiles.yml).
 //
-//   node scripts/build-tiles.ts roads.geojsonseq site 2026-11-18
+//   node scripts/build-tiles.ts roads.geojsonseq site 2026-11-18 [cameras.json]
+//
+// cameras.json (from scripts/fetch-cameras.ts) holds the national speed camera dataset; when it is
+// given and not empty it replaces OpenStreetMap's (much sparser) speed cameras.
 //
 // Output: site/index.json and site/v1/<x>/<y>.json for every tile that has anything in it.
-import { createReadStream, mkdirSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { classify, encodeCamera, encodeWay, parseMaxspeed, splitByTile, tileOf } from '../src/services/tileformat.ts';
+import { classify, encodeCamera, encodeWay, parseMaxspeed, splitByTile, tileOf, type BundledCamera } from '../src/services/tileformat.ts';
 
-const [input, outDir, built = new Date().toISOString().slice(0, 10)] = process.argv.slice(2);
+const [input, outDir, built = new Date().toISOString().slice(0, 10), camerasFile] = process.argv.slice(2);
+const official: BundledCamera[] = camerasFile && existsSync(camerasFile) ? JSON.parse(readFileSync(camerasFile, 'utf8')) : [];
 if (!input || !outDir) {
   console.error('usage: node scripts/build-tiles.ts <roads.geojsonseq> <out dir> [built date]');
   process.exit(1);
@@ -33,7 +37,7 @@ for await (const raw of lines) {
   const g = f.geometry;
   const props = f.properties ?? {};
   if (g?.type === 'Point') {
-    if (props.highway !== 'speed_camera') continue;
+    if (props.highway !== 'speed_camera' || official.length) continue;
     const [lon, lat] = g.coordinates;
     const t = tileOf({ lat, lon });
     tile(`${t.x}:${t.y}`).c.push(encodeCamera({ lat, lon, maxspeed: parseMaxspeed(props.maxspeed) }));
@@ -47,6 +51,12 @@ for await (const raw of lines) {
   }
 }
 
+for (const cam of official) {
+  const t = tileOf(cam);
+  tile(`${t.x}:${t.y}`).c.push(encodeCamera(cam));
+  cameras++;
+}
+
 let bytes = 0;
 for (const [key, data] of tiles) {
   const [x, y] = key.split(':');
@@ -55,7 +65,10 @@ for (const [key, data] of tiles) {
   bytes += json.length;
   writeFileSync(`${outDir}/v1/${x}/${y}.json`, json);
 }
-writeFileSync(`${outDir}/index.json`, JSON.stringify({ version: 1, built, tiles: tiles.size, ways, cameras }));
+writeFileSync(
+  `${outDir}/index.json`,
+  JSON.stringify({ version: 1, built, tiles: tiles.size, ways, cameras, cameraSource: official.length ? 'data.go.kr' : 'osm' }),
+);
 writeFileSync(`${outDir}/.nojekyll`, '');
 console.log(
   `${features} features → ${ways} ways, ${cameras} cameras in ${tiles.size} tiles, ${(bytes / 1e6).toFixed(1)} MB (built ${built})`,

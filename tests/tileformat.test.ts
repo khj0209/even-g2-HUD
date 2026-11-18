@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classify, decodeTile, encodeTile, splitByTile, tileOf } from '../src/services/tileformat';
+import { CAM_SECTION_END, CAM_SECTION_START, CAM_SIGNAL, CAM_SPEED, classify, decodeTile, encodeTile, parseOfficialCamera, splitByTile, tileOf } from '../src/services/tileformat';
 
 describe('classify', () => {
   it('keeps drivable roads and anything with a limit', () => {
@@ -54,6 +54,31 @@ describe('encode/decode', () => {
     expect(back.ways[0]).toMatchObject({ drivable: true, major: false, maxspeed: 50 });
     expect(back.ways[0].points[0].lat).toBeCloseTo(37.12346, 5);
     expect(back.ways[0].points[1].lon).toBeCloseTo(126.98801, 5);
-    expect(back.cameras).toEqual([{ lat: 37.5, lon: 127, maxspeed: null }]);
+    expect(back.cameras).toEqual([{ lat: 37.5, lon: 127, maxspeed: null, kind: 0, section: 0 }]);
+  });
+});
+
+describe('parseOfficialCamera', () => {
+  const row = (r: Record<string, string>) => parseOfficialCamera({ latitude: '37.5', longitude: '127.0', lmttVe: '0', regltSctnLcSe: '', ovrspdRegltSctnLt: '', ...r });
+
+  it('tells speed, signal and section cameras apart', () => {
+    expect(row({ lmttVe: '60' })).toMatchObject({ kind: CAM_SPEED, maxspeed: 60 });
+    expect(row({ lmttVe: '0' })).toMatchObject({ kind: CAM_SIGNAL, maxspeed: null });
+    expect(row({ lmttVe: '100', regltSctnLcSe: '1', ovrspdRegltSctnLt: '7.6' })).toMatchObject({
+      kind: CAM_SECTION_START,
+      maxspeed: 100,
+      section: 7600,
+    });
+    expect(row({ lmttVe: '100', regltSctnLcSe: '종점' })).toMatchObject({ kind: CAM_SECTION_END, section: 0 });
+  });
+
+  it('drops rows without a usable position', () => {
+    expect(row({ latitude: '', longitude: '' })).toBeNull();
+    expect(row({ latitude: '0', longitude: '0' })).toBeNull();
+  });
+
+  it('round-trips kind and section length through the tile format', () => {
+    const cam = row({ lmttVe: '100', regltSctnLcSe: '1', ovrspdRegltSctnLt: '7.6' })!;
+    expect(decodeTile(JSON.parse(encodeTile([], [cam]))).cameras[0]).toMatchObject({ kind: CAM_SECTION_START, section: 7600, maxspeed: 100 });
   });
 });

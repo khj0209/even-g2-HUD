@@ -23,6 +23,17 @@ export interface Settings {
   demo: boolean;
   /** Personal Tmap(SK open api) appKey. Empty string falls back to OSRM/Nominatim. */
   tmapApiKey: string;
+  /** Dim the HUD at night: automatically after dusk, or always bright/dim. */
+  nightMode: 'auto' | 'day' | 'night';
+  /** Saved destinations, started from the glasses menu. */
+  home: SavedPlace | null;
+  work: SavedPlace | null;
+  /** Experimental drowsiness warning from the glasses' motion sensor. */
+  drowsy: { enabled: boolean; cal: { axis: 0 | 1 | 2; sign: 1 | -1; amp: number } | null };
+}
+
+export interface SavedPlace extends LatLon {
+  name: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -31,6 +42,10 @@ export const DEFAULT_SETTINGS: Settings = {
   cameraAlerts: true,
   demo: false,
   tmapApiKey: '',
+  nightMode: 'auto',
+  home: null,
+  work: null,
+  drowsy: { enabled: false, cal: null },
 };
 
 export type ManeuverIcon =
@@ -60,6 +75,18 @@ export interface CameraAlert {
   dist: number;
   /** km/h, if tagged. */
   limit: number | null;
+  /** 0 speed, 1 section start, 2 section end, 3 signal (see tileformat CAM_*). */
+  kind?: number;
+}
+
+/** Inside a section speed check (구간단속). */
+export interface SectionStatus {
+  /** km/h. */
+  limit: number | null;
+  /** Average speed since the start camera, km/h. */
+  avgKmh: number;
+  /** Metres to the end camera, if the section length is known. */
+  remaining: number | null;
 }
 
 /** A point in minimap pixels relative to the car (x right, y down), heading-up rotated if known. */

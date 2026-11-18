@@ -1,6 +1,6 @@
 import { compass, interpolate, localOffset, projectOnSegment } from '../core/geo';
 import { displayLimit, displaySpeed, formatClock, formatDistance, KMH_PER_MPS, unitLabel } from '../core/format';
-import type { CameraAlert, Fix, LatLon, ManeuverIcon, MinimapPoint, MinimapView, NavProgress, OverviewView, Settings } from '../core/types';
+import type { CameraAlert, Fix, LatLon, ManeuverIcon, MinimapPoint, MinimapView, NavProgress, OverviewView, SectionStatus, Settings } from '../core/types';
 import type { RoadData } from '../services/roads';
 import type { Route } from '../services/routing';
 import { MINIMAP, OVERVIEW } from './layout';
@@ -16,6 +16,12 @@ export interface HudInput {
   route: Route | null;
   /** Map data around the car, for the minimap. */
   roads?: RoadData;
+  /** Inside a section speed check. */
+  section?: SectionStatus | null;
+  /** A short message to show in the info line for a moment (menu feedback, warnings). */
+  flash?: string | null;
+  /** Night: dim the whole HUD. */
+  dim?: boolean;
   settings: Settings;
   now: Date;
 }
@@ -30,8 +36,11 @@ export interface HudView {
   nav: { icon: ManeuverIcon; dist: string } | null;
   /** One line above the cluster: road and arrival while guiding, otherwise clock and heading. */
   info: string;
-  /** Short camera warning, e.g. "단속 300 m", or empty. */
+  /** Short camera / section warning, e.g. "단속 300 m", or empty. Lines split by "\n". */
   alert: string;
+  /** Section average over its limit. */
+  sectionOver: boolean;
+  dim: boolean;
   /** Null without a position. */
   minimap: MinimapView | null;
   /** Null when not navigating. */
@@ -281,6 +290,18 @@ export function buildView(input: HudInput): HudView {
   } else info = [formatClock(now), fix.heading != null ? compass(fix.heading) : ''].filter(Boolean).join('  ');
   // Say so when the position is extrapolated (GPS lost in a tunnel), so it isn't taken as measured.
   if (fix?.estimated) info = `GPS 추정 · ${info}`;
+  if (input.flash) info = input.flash;
+
+  const sec = input.section;
+  const sectionOver = !!sec && sec.limit != null && sec.avgKmh > sec.limit + settings.overspeedTolerance;
+  let alert = '';
+  if (sec) {
+    const avg = `평균 ${displaySpeed(sec.avgKmh / KMH_PER_MPS, unit)}${sectionOver ? ' !' : ''}`;
+    alert = `${sec.remaining != null ? `구간 ${formatDistance(sec.remaining, unit)}` : '구간단속'}\n${avg}`;
+  } else if (cam) {
+    const label = ['단속', '구간단속', '구간 끝', '신호단속'][cam.kind ?? 0] ?? '단속';
+    alert = `${label}\n${formatDistance(cam.dist, unit)}`;
+  }
 
   return {
     speed: fix?.speed != null ? String(displaySpeed(fix.speed, unit)) : '--',
@@ -289,7 +310,9 @@ export function buildView(input: HudInput): HudView {
     limit: limit != null ? displayLimit(limit, unit) : null,
     nav: nav && { icon: nav.icon, dist: formatDistance(nav.distToManeuver, unit) },
     info,
-    alert: cam ? `단속 ${formatDistance(cam.dist, unit)}` : '',
+    alert,
+    sectionOver,
+    dim: !!input.dim,
     minimap: buildMinimap(input),
     overview: buildOverview(input),
   };
