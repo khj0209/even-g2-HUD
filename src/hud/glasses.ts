@@ -11,10 +11,11 @@ import {
   type EvenAppBridge,
 } from '@evenrealities/even_hub_sdk';
 import { pngBytes } from './draw';
-import type { Box } from './layout';
+import { LAYOUT, type Box } from './layout';
 import type { HudSink } from './renderer';
 
 const IMAGE_ORDER = ['speed', 'limit', 'turn', 'minimap'];
+const SPEED_ID = LAYOUT.find((b) => b.name === 'speed')!.id;
 const imagePriority = (box: Box) => {
   const i = IMAGE_ORDER.indexOf(box.name);
   return i < 0 ? IMAGE_ORDER.length : i;
@@ -85,6 +86,10 @@ export class GlassesSink implements HudSink {
           const boxes = this.layout;
           this.layout = null;
           await this.applyLayout(boxes);
+        } else if (this.images.has(SPEED_ID)) {
+          // The speed goes ahead of everything else: it changes every second and is what the
+          // driver looks for first, so it should never wait behind a text update.
+          await this.sendImage(SPEED_ID);
         } else if (this.texts.size) {
           const [id, { box, content }] = this.texts.entries().next().value!;
           this.texts.delete(id);
@@ -93,14 +98,8 @@ export class GlassesSink implements HudSink {
           );
         } else if (this.images.size) {
           // Most important image first, so the speed never waits behind the minimap.
-          const [id, { box, image }] = [...this.images].sort(
-            ([, a], [, b]) => imagePriority(a.box) - imagePriority(b.box),
-          )[0];
-          this.images.delete(id);
-          const result = await this.bridge.updateImageRawData(
-            new ImageRawDataUpdate({ containerID: box.id, containerName: box.name, imageData: await pngBytes(image) }),
-          );
-          if (result !== ImageRawDataUpdateResult.success) console.warn('[glasses] image', box.name, result);
+          const [id] = [...this.images].sort(([, a], [, b]) => imagePriority(a.box) - imagePriority(b.box))[0];
+          await this.sendImage(id);
         } else break;
       }
     } catch (e) {
@@ -108,6 +107,15 @@ export class GlassesSink implements HudSink {
     } finally {
       this.pumping = false;
     }
+  }
+
+  private async sendImage(id: number): Promise<void> {
+    const { box, image } = this.images.get(id)!;
+    this.images.delete(id);
+    const result = await this.bridge.updateImageRawData(
+      new ImageRawDataUpdate({ containerID: box.id, containerName: box.name, imageData: await pngBytes(image) }),
+    );
+    if (result !== ImageRawDataUpdateResult.success) console.warn('[glasses] image', box.name, result);
   }
 
   private async applyLayout(boxes: Box[]): Promise<void> {

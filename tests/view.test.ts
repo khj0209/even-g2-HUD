@@ -150,19 +150,70 @@ describe('LimitFilter', () => {
 });
 
 describe('FixNormalizer', () => {
+  const T = Date.now();
+  const at = (lat: number, ms: number, extra: Partial<Fix> = {}): Fix => ({ lat, lon: 127, speed: null, heading: null, ts: T + ms, ...extra });
+  const M = 1 / 111195; // degrees of latitude per metre
+
   it('derives speed and heading from movement when the platform omits them', () => {
     const n = new FixNormalizer();
-    n.next({ lat: 37.5, lon: 127, speed: null, heading: null, ts: 0 });
-    const f = n.next({ lat: 37.5001, lon: 127, speed: null, heading: null, ts: 1000 });
+    n.next(at(37.5, 0));
+    const f = n.next(at(37.5 + 11.1 * M, 1000))!;
     expect(f.speed).toBeCloseTo(11.1, 1);
     expect(f.heading).toBeCloseTo(0, 3);
   });
 
   it('ignores invalid values and keeps the last heading at standstill', () => {
     const n = new FixNormalizer();
-    expect(n.next({ lat: 37.5, lon: 127, speed: 10, heading: 90, ts: 0 }).heading).toBe(90);
-    const stopped = n.next({ lat: 37.5, lon: 127, speed: 0.2, heading: 200, ts: 1000 });
+    expect(n.next(at(37.5, 0, { speed: 10, heading: 90 }))!.heading).toBe(90);
+    const stopped = n.next(at(37.5, 1000, { speed: 0.2, heading: 200 }))!;
     expect(stopped.heading).toBe(90);
-    expect(n.next({ lat: 37.5, lon: 127, speed: -1, heading: -1, ts: 2000 }).speed).toBe(0);
+    expect(n.next(at(37.5, 2000, { speed: -1, heading: -1 }))!.speed).toBe(0);
+  });
+
+  it('skips inaccurate fixes, duplicates and out-of-order fixes', () => {
+    const n = new FixNormalizer();
+    expect(n.next(at(37.5, 0, { accuracy: 120 }))).toBeNull();
+    expect(n.next(at(37.5, 0, { accuracy: 8 }))).not.toBeNull();
+    expect(n.next(at(37.5, 0))).toBeNull();
+    expect(n.next(at(37.5, -500))).toBeNull();
+  });
+
+  it('rejects an impossible jump, but accepts the new place if it persists', () => {
+    const n = new FixNormalizer();
+    n.next(at(37.5, 0, { speed: 15 }));
+    const far = 37.5 + 5000 * M; // 5 km in a second
+    expect(n.next(at(far, 1000, { speed: 15 }))).toBeNull();
+    expect(n.next(at(far, 2000, { speed: 15 }))).toBeNull();
+    expect(n.next(at(far, 3000, { speed: 15 }))).toBeNull();
+    expect(n.next(at(far, 4000, { speed: 15 }))).not.toBeNull();
+  });
+
+  it('smooths a one-off spike in platform speed', () => {
+    const n = new FixNormalizer();
+    let lat = 37.5;
+    const step = (ms: number, mps: number) => n.next(at((lat += mps * M), ms, { speed: mps }))!.speed! * 3.6;
+    step(0, 50 / 3.6);
+    step(1000, 50 / 3.6);
+    const spike = step(2000, 80 / 3.6);
+    expect(spike).toBeGreaterThan(50);
+    expect(spike).toBeLessThan(80); // pulled most of the way, not all the way
+    expect(step(3000, 80 / 3.6)).toBeGreaterThan(spike); // and catches up quickly
+  });
+
+  it('holds the shown speed through sub-km/h jitter, and reads 0 when crawling', () => {
+    const n = new FixNormalizer();
+    let lat = 37.5;
+    const step = (ms: number, kmh: number) => n.next(at((lat += 1e-6), ms, { speed: kmh / 3.6 }))!.speed! * 3.6;
+    const first = step(0, 59.6);
+    expect(step(1000, 60.0)).toBeCloseTo(first, 5);
+    expect(step(2000, 59.7)).toBeCloseTo(first, 5);
+    expect(step(3000, 2)).toBeLessThan(40); // big change goes through
+    expect(step(10000, 1)).toBe(0);
+  });
+
+  it('accepts timestamps in seconds', () => {
+    const n = new FixNormalizer();
+    const f = n.next({ lat: 37.5, lon: 127, speed: 10, heading: 0, ts: Math.floor(T / 1000) });
+    expect(Math.abs(f!.ts - T)).toBeLessThan(1500);
   });
 });

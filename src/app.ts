@@ -145,7 +145,9 @@ export class App {
       this.source = this.bridge ? new BridgeLocationSource(this.bridge) : new BrowserLocationSource();
     }
     this.source.start((raw) => {
-      this.fix = this.normalizer.next(raw);
+      const fix = this.normalizer.next(raw);
+      if (!fix) return; // skipped: inaccurate, duplicate or a glitch
+      this.fix = fix;
       this.tick();
     });
   }
