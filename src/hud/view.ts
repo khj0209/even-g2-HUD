@@ -306,7 +306,14 @@ export class LimitFilter {
   private candidate: number | null = null;
   private count = 0;
 
-  next(raw: number | null): number | null {
+  /** `newRoad`: the car was just matched onto a different road, so a new limit is expected now. */
+  next(raw: number | null, newRoad = false): number | null {
+    if (newRoad && raw != null) {
+      this.shown = raw;
+      this.candidate = null;
+      this.count = 0;
+      return raw;
+    }
     if (raw === this.shown) {
       this.count = 0;
       return this.shown;

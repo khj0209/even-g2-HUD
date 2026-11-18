@@ -187,6 +187,14 @@ describe('buildView overview', () => {
 });
 
 describe('LimitFilter', () => {
+  it('switches at once when the car has moved onto another road', () => {
+    const f = new LimitFilter();
+    f.next(50);
+    f.next(50);
+    expect(f.next(30, true)).toBe(30);
+    expect(f.next(null, true)).toBe(30); // no limit on the new road: still needs the misses
+  });
+
   it('needs two matching readings to change and ten to clear', () => {
     const f = new LimitFilter();
     expect(f.next(50)).toBeNull();
@@ -269,9 +277,40 @@ describe('FixNormalizer', () => {
     const off = n.next({ ...at(37.5 + 20 * M, 2000, { speed: 10, heading: 0, accuracy: 40 }), lon: 127 + 40 * M * 1.26 })!;
     expect(off).not.toBeNull();
     const eastShift = (off.lon - 127) / (M * 1.26);
-    expect(eastShift).toBeGreaterThan(2);
-    expect(eastShift).toBeLessThan(15); // pulled most of the way back towards the road
+    expect(eastShift).toBeGreaterThan(0.2);
+    expect(eastShift).toBeLessThan(10); // barely moved by one poor fix
     expect(off.lat).toBeCloseTo(37.5 + 20 * M, 4); // and it still moved on
+  });
+
+  it('passes good fixes through with little lag, and follows a persistent offset in the end', () => {
+    const n = new FixNormalizer();
+    const east = (f: Fix) => (f.lon - 127) / (M * 1.26);
+    n.next(at(37.5, 0, { speed: 10, heading: 0, accuracy: 4 }));
+    // A good fix 6 m to the side (e.g. a lane change): taken more than halfway at once.
+    const good = n.next({ ...at(37.5 + 10 * M, 1000, { speed: 10, heading: 0, accuracy: 4 }), lon: 127 + 6 * M * 1.26 })!;
+    expect(east(good)).toBeGreaterThan(3);
+    // Poor fixes that keep saying "40 m east": followed gradually.
+    let f = good;
+    for (let i = 2; i < 30; i++)
+      f = n.next({ ...at(37.5 + 10 * i * M, i * 1000, { speed: 10, heading: 0, accuracy: 40 }), lon: 127 + 40 * M * 1.26 })!;
+    expect(east(f)).toBeGreaterThan(25);
+  });
+
+  it('takes fixes almost as they are in a turn', () => {
+    const n = new FixNormalizer();
+    n.next(at(37.5, 0, { speed: 10, heading: 0, accuracy: 4 }));
+    n.next(at(37.5 + 10 * M, 1000, { speed: 10, heading: 0, accuracy: 4 }));
+    // Turned right: now heading east; the fix is 10 m east of the corner.
+    const turned = n.next({ ...at(37.5 + 10 * M, 2000, { speed: 10, heading: 90, accuracy: 4 }), lon: 127 + 10 * M * 1.26 })!;
+    expect((turned.lon - 127) / (M * 1.26)).toBeGreaterThan(9);
+    expect(turned.lat).toBeCloseTo(37.5 + 10 * M, 5);
+  });
+
+  it('passes plausible speed changes straight through', () => {
+    const n = new FixNormalizer();
+    n.next(at(37.5, 0, { speed: 50 / 3.6, heading: 0 }));
+    // 50 → 60 km/h in a second (2.8 m/s²): shown at once.
+    expect(n.next(at(37.5 + 14 * M, 1000, { speed: 60 / 3.6, heading: 0 }))!.speed! * 3.6).toBeCloseTo(60, 5);
   });
 
   it('follows a real jump instead of averaging it away', () => {

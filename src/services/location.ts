@@ -1,5 +1,5 @@
 import { AppLocationAccuracy, type EvenAppBridge } from '@evenrealities/even_hub_sdk';
-import { bearing, destination, distance } from '../core/geo';
+import { angleDiff, bearing, destination, distance } from '../core/geo';
 import type { Fix, LatLon } from '../core/types';
 import { demoFix, inDemoTunnel } from './demo';
 
@@ -22,6 +22,8 @@ const FILTER_RESET_DIST = 150;
 const MAX_PLAUSIBLE_SPEED = 70;
 /** After this many rejected jumps in a row, accept the new place (e.g. leaving a long tunnel). */
 const MAX_REJECTS = 3;
+/** m/s²: a hard stop is ~8; GPS speed jumping faster than this is a glitch. */
+const MAX_PLAUSIBLE_ACCEL = 8;
 /** Window for deriving speed from positions when the platform gives none. */
 const DERIVE_WINDOW_MS = 3000;
 /** Below this the car is treated as stopped: GPS drifts a few km/h when standing still. */
@@ -40,7 +42,7 @@ const HYSTERESIS_KMH = 0.7;
 export class FixNormalizer {
   private history: Fix[] = [];
   /** Filtered position and when it was last updated. */
-  private pos: (LatLon & { ts: number }) | null = null;
+  private pos: (LatLon & { ts: number; P: number; heading: number | null }) | null = null;
   private heading: number | null = null;
   private smoothed: number | null = null;
   private shownKmh: number | null = null;
@@ -80,32 +82,55 @@ export class FixNormalizer {
   }
 
   /**
-   * Blend each fix with where the car should be by now (last position moved on at the current
-   * speed and heading), trusting the fix more the better its accuracy. Scatter of tens of metres
-   * between buildings then shows as a small wobble instead of jumps.
+   * A small Kalman-style filter. Each fix is blended with where the car should be by now (last
+   * position carried on at the current speed and heading), weighted by how much each is trusted:
+   * - driving straight with good GPS, the prediction is already right, so nothing lags;
+   * - when the heading swings (a turn), the prediction is distrusted and the fix taken almost as is;
+   * - a fix that disagrees with the prediction far more than its accuracy explains is a glitch and
+   *   only nudges the position; one more than 150 m off is a real jump and is followed at once.
    */
   private filterPosition(raw: Fix, speed: number | null): LatLon {
     const prev = this.pos;
-    let pred: LatLon | null = prev;
-    if (prev && speed != null && speed > 1 && this.heading != null)
-      pred = destination(prev, this.heading, speed * ((raw.ts - prev.ts) / 1000));
-    let out: LatLon = { lat: raw.lat, lon: raw.lon };
-    if (pred && distance(pred, raw) < FILTER_RESET_DIST) {
-      // ~0.75 for a 4 m fix, ~0.2 at 50 m, 0.15 at worst.
-      const k = Math.min(0.9, Math.max(0.15, 12 / (12 + (raw.accuracy ?? 8))));
-      out = { lat: pred.lat + k * (raw.lat - pred.lat), lon: pred.lon + k * (raw.lon - pred.lon) };
+    const R = Math.max(raw.accuracy ?? 8, 3) ** 2;
+    if (!prev) {
+      this.pos = { lat: raw.lat, lon: raw.lon, ts: raw.ts, P: R, heading: this.heading };
+      return { lat: raw.lat, lon: raw.lon };
     }
-    this.pos = { ...out, ts: raw.ts };
+    const dt = Math.max(0, (raw.ts - prev.ts) / 1000);
+    let pred: LatLon = prev;
+    if (speed != null && speed > 1 && this.heading != null) pred = destination(prev, this.heading, speed * dt);
+    // Uncertainty of the prediction: grows with time (speed errors), and a lot in a turn.
+    let P = prev.P + (3 * dt) ** 2;
+    const turned = prev.heading != null && this.heading != null && Math.abs(angleDiff(prev.heading, this.heading)) > 15;
+    if (turned) P += 30 ** 2;
+    const innov = distance(pred, raw);
+    let out: LatLon;
+    if (innov > FILTER_RESET_DIST) {
+      out = { lat: raw.lat, lon: raw.lon };
+      P = R;
+    } else {
+      let k = P / (P + R);
+      if (innov ** 2 > 9 * (P + R)) k *= 0.3; // beyond 3σ: a glitch
+      out = { lat: pred.lat + k * (raw.lat - pred.lat), lon: pred.lon + k * (raw.lon - pred.lon) };
+      P = (1 - k) * P;
+    }
+    this.pos = { ...out, ts: raw.ts, P, heading: this.heading };
     return out;
   }
 
+
   /**
-   * Light exponential smoothing (time constant 0.5 s for Doppler speed from the platform, which is
-   * already clean, 1.2 s for speed derived from positions), then hysteresis on the shown value.
+   * Exponential smoothing only where needed (implausible jumps in Doppler speed: 0.5 s; speed derived
+   * from positions: 1.2 s), then hysteresis on the shown value.
    */
   private smooth(mps: number, dtMs: number, fromPlatform: boolean): number {
-    const tau = fromPlatform ? 500 : 1200;
-    const alpha = this.smoothed == null || dtMs <= 0 ? 1 : 1 - Math.exp(-dtMs / tau);
+    // Doppler speed from the platform is already clean: pass it straight through unless the change
+    // is more than a car can do (a glitch), so the speedometer doesn't lag. Speed derived from
+    // positions is noisier and always gets a little smoothing.
+    const plausible =
+      this.smoothed != null && dtMs > 0 && Math.abs(mps - this.smoothed) / (dtMs / 1000) <= MAX_PLAUSIBLE_ACCEL;
+    const tau = fromPlatform ? (plausible ? 0 : 500) : 1200;
+    const alpha = this.smoothed == null || dtMs <= 0 || tau === 0 ? 1 : 1 - Math.exp(-dtMs / tau);
     this.smoothed = this.smoothed == null ? mps : this.smoothed + alpha * (mps - this.smoothed);
     let kmh = this.smoothed * 3.6;
     if (kmh < STOPPED_KMH) kmh = 0;

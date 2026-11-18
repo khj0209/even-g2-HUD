@@ -50,6 +50,9 @@ export class App {
   private matcher = new MapMatcher();
   private cameras = new CameraTracker();
   private lastNav: { nav: NavProgress; at: number } | null = null;
+  /** The road the last fix was matched to, and whether that just changed (for the limit sign). */
+  private matchedRoad: unknown = null;
+  private roadChanged = false;
   private tmapLimits = new TmapLimitService();
   /** Where the last real fix was matched on the map, for dead reckoning through tunnels. */
   private lastRef: PathRef | null = null;
@@ -183,6 +186,8 @@ export class App {
       if (!fix) return; // skipped: inaccurate, duplicate or a glitch
       this.fix = this.matcher.snap(fix, this.tracker?.route.points ?? null, this.mapPaths());
       this.lastRef = this.matcher.last;
+      if (this.matcher.road && this.matcher.road !== this.matchedRoad) this.roadChanged = true;
+      if (this.matcher.road) this.matchedRoad = this.matcher.road;
       if (!this.settings.demo) this.tmapLimits.update(this.fix, this.settings.tmapApiKey, this.matcher.road);
       this.tick();
     });
@@ -239,7 +244,8 @@ export class App {
       // Tmap's limit (if a key is set and it has one here) over OpenStreetMap's: it's what Korean
       // navigation uses and far more complete.
       const tmap = this.settings.demo ? null : this.tmapLimits.limitAt(fix);
-      limit = this.limitFilter.next(tmap ?? matchLimit(this.roads.data, fix));
+      limit = this.limitFilter.next(tmap ?? matchLimit(this.roads.data, fix), this.roadChanged && !fix.estimated);
+      this.roadChanged = false;
       camera = this.cameras.next(this.roads.data, fix);
       nav = this.trackRoute(fix);
     } else limit = this.limitFilter.current;
