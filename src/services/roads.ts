@@ -3,17 +3,25 @@ import type { CameraAlert, Fix, LatLon } from '../core/types';
 
 /** A road with a tagged speed limit (km/h). */
 export interface RoadWay {
+  id?: number;
   maxspeed: number;
   points: LatLon[];
 }
 
 export interface Camera extends LatLon {
+  id?: number;
   maxspeed: number | null;
 }
 
 /** Any drivable road, for drawing the minimap. */
 export interface MapWay {
+  id?: number;
   major: boolean;
+  points: LatLon[];
+}
+
+export interface Building {
+  id?: number;
   points: LatLon[];
 }
 
@@ -29,7 +37,7 @@ export interface RoadData {
 
 export const emptyRoadData = (): RoadData => ({ ways: [], cameras: [], map: [], buildings: [] });
 
-const DRIVABLE = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)(_link)?$/;
+export const DRIVABLE = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)(_link)?$/;
 const MAJOR = /^(motorway|trunk|primary|secondary)(_link)?$/;
 
 /**
@@ -41,11 +49,7 @@ export const OVERPASS_ENDPOINTS = [
   'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
-const REQUEST_TIMEOUT_MS = 25000;
-const WAY_RADIUS = 700;
-const CAMERA_RADIUS = 2000;
-/** Refetch once we have driven this far from the centre of the last query. */
-const REFETCH_DIST = 400;
+const REQUEST_TIMEOUT_MS = 30000;
 
 /** OSM maxspeed tag → km/h. Handles "50", "50 km/h", "30 mph"; anything else (e.g. "signals") is null. */
 export function parseMaxspeed(tag: string | undefined): number | null {
@@ -56,58 +60,28 @@ export function parseMaxspeed(tag: string | undefined): number | null {
   return Math.round(m[2]?.toLowerCase() === 'mph' ? v * 1.609344 : v);
 }
 
-/** Speed limits and cameras: small and most important, so it is its own request and goes first. */
-export function buildQuery(c: LatLon): string {
-  const at = `${c.lat.toFixed(5)},${c.lon.toFixed(5)}`;
-  return (
-    `[out:json][timeout:20];(` +
-    `way(around:${WAY_RADIUS},${at})[highway][maxspeed];` +
-    `node(around:${CAMERA_RADIUS},${at})[highway=speed_camera];` +
-    `);out body geom;`
-  );
-}
-
-const MAP_RADIUS = 700;
-const MAP_REFETCH_DIST = 250;
-
-/** Every drivable road nearby, for the minimap. Only the `highway` tag is needed. */
-export function buildMapQuery(c: LatLon): string {
-  const at = `${c.lat.toFixed(5)},${c.lon.toFixed(5)}`;
-  return `[out:json][timeout:20];way(around:${MAP_RADIUS},${at})[highway~"${DRIVABLE.source}"];out body geom qt;`;
-}
-
-const BUILDING_RADIUS = 400;
-/** Buildings only matter at city speeds and change block by block, so they use a smaller area. */
-const BUILDING_REFETCH_DIST = 150;
-const BUILDING_MAX_KMH = 70;
-
-/** Outlines only (`skel`: no tags), to keep the download small in dense areas. */
-export function buildBuildingQuery(c: LatLon): string {
-  return `[out:json][timeout:20];way(around:${BUILDING_RADIUS},${c.lat.toFixed(5)},${c.lon.toFixed(5)})[building];out skel geom qt;`;
-}
-
-export function parseBuildings(json: any): LatLon[][] {
-  const out: LatLon[][] = [];
-  for (const el of json?.elements ?? [])
-    if (el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 3)
-      out.push(el.geometry.map((g: any) => ({ lat: g.lat, lon: g.lon })));
-  return out;
-}
-
 export function parseOverpass(json: any): RoadData {
   const data = emptyRoadData();
   for (const el of json?.elements ?? []) {
     if (el.type === 'way' && Array.isArray(el.geometry)) {
       const points: LatLon[] = el.geometry.map((g: any) => ({ lat: g.lat, lon: g.lon }));
       const maxspeed = parseMaxspeed(el.tags?.maxspeed);
-      if (maxspeed) data.ways.push({ maxspeed, points });
+      if (maxspeed) data.ways.push({ id: el.id, maxspeed, points });
       const highway = String(el.tags?.highway ?? '');
-      if (DRIVABLE.test(highway)) data.map.push({ major: MAJOR.test(highway), points });
+      if (DRIVABLE.test(highway)) data.map.push({ id: el.id, major: MAJOR.test(highway), points });
     } else if (el.type === 'node') {
-      data.cameras.push({ lat: el.lat, lon: el.lon, maxspeed: parseMaxspeed(el.tags?.maxspeed) });
+      data.cameras.push({ id: el.id, lat: el.lat, lon: el.lon, maxspeed: parseMaxspeed(el.tags?.maxspeed) });
     }
   }
   return data;
+}
+
+export function parseBuildings(json: any): Building[] {
+  const out: Building[] = [];
+  for (const el of json?.elements ?? [])
+    if (el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 3)
+      out.push({ id: el.id, points: el.geometry.map((g: any) => ({ lat: g.lat, lon: g.lon })) });
+  return out;
 }
 
 const MATCH_DIST = 30;
@@ -207,95 +181,3 @@ export class OverpassClient {
   }
 }
 
-/** Fetches one Overpass query for the area around the car, again whenever it has moved far enough. */
-class AreaFetcher<T> {
-  private center: LatLon | null = null;
-  private busy = false;
-  private retryAt = 0;
-  private failures = 0;
-  /** For the phone page: what happened to the last request. */
-  status: 'idle' | 'loading' | 'ok' | 'error' = 'idle';
-  error = '';
-
-  constructor(
-    private client: OverpassClient,
-    private query: (c: LatLon) => string,
-    private parse: (json: any) => T,
-    private refetchDist: number,
-    private onData: (data: T) => void,
-  ) {}
-
-  update(fix: Fix): void {
-    if (this.busy || Date.now() < this.retryAt) return;
-    if (this.center && distance(this.center, fix) < this.refetchDist) return;
-    this.busy = true;
-    if (this.status !== 'ok') this.status = 'loading';
-    const center = { lat: fix.lat, lon: fix.lon };
-    this.client
-      .run(this.query(center))
-      .then((json) => {
-        this.onData(this.parse(json));
-        this.center = center;
-        this.status = 'ok';
-        this.error = '';
-        this.failures = 0;
-      })
-      .catch((e) => {
-        // Keep showing the last good data; just note that the refresh failed.
-        if (this.status !== 'ok') this.status = 'error';
-        this.error = describe(e);
-        // Back off while every server is struggling: 10 s, 20 s, 40 s … up to 2 minutes.
-        this.retryAt = Date.now() + Math.min(120000, 10000 * 2 ** this.failures++);
-      })
-      .finally(() => (this.busy = false));
-  }
-}
-
-/**
- * Keeps map data for the area around the car, refetching from Overpass as it moves. Speed limits,
- * minimap roads and buildings are separate requests, sent one at a time in that order, so the
- * small speed-limit request is never held up by the larger map downloads.
- */
-export class RoadDataService {
-  data: RoadData = emptyRoadData();
-  private limits: AreaFetcher<RoadData>;
-  private roads: AreaFetcher<MapWay[]>;
-  private buildings: AreaFetcher<LatLon[][]>;
-
-  constructor(fetchFn: typeof fetch = (...a) => fetch(...a), endpoints = OVERPASS_ENDPOINTS) {
-    const client = new OverpassClient(fetchFn, endpoints);
-    this.limits = new AreaFetcher(client, buildQuery, parseOverpass, REFETCH_DIST, (d) => {
-      this.data = { ...this.data, ways: d.ways, cameras: d.cameras };
-    });
-    this.roads = new AreaFetcher(client, buildMapQuery, (json) => parseOverpass(json).map, MAP_REFETCH_DIST, (map) => {
-      this.data = { ...this.data, map };
-    });
-    this.buildings = new AreaFetcher(client, buildBuildingQuery, parseBuildings, BUILDING_REFETCH_DIST, (b) => {
-      this.data = { ...this.data, buildings: b };
-    });
-  }
-
-  /** One line for the phone page, e.g. "제한속도 40 · 도로 120 · 건물 340", to diagnose missing data. */
-  statusText(): string {
-    const part = (label: string, f: { status: string; error: string }, count: number) =>
-      f.status === 'ok'
-        ? `${label} ${count}${f.error ? ' (갱신 오류)' : ''}`
-        : f.status === 'loading'
-          ? `${label} 받는 중`
-          : f.status === 'error'
-            ? `${label} 오류: ${f.error}`
-            : `${label} 대기`;
-    return [
-      part('제한속도', this.limits, this.data.ways.length),
-      part('도로', this.roads, this.data.map.length),
-      part('건물', this.buildings, this.data.buildings.length),
-    ].join(' · ');
-  }
-
-  /** Call on every fix; cheap unless a refetch is due. */
-  update(fix: Fix): void {
-    this.limits.update(fix);
-    this.roads.update(fix);
-    if ((fix.speed ?? 0) * 3.6 < BUILDING_MAX_KMH) this.buildings.update(fix);
-  }
-}

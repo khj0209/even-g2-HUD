@@ -12,7 +12,8 @@ import {
   type LocationSource,
 } from './services/location';
 import { deadReckon, DR_START_MS, MapMatcher, type PathRef } from './services/matching';
-import { cameraAhead, matchLimit, RoadDataService, type RoadData } from './services/roads';
+import { RoadDataService } from './services/mapcache';
+import { cameraAhead, matchLimit, type RoadData } from './services/roads';
 import { fetchRoute, RouteTracker, type Place } from './services/routing';
 
 const SETTINGS_KEY = 'drivehud.settings';
@@ -110,10 +111,26 @@ export class App {
     try {
       this.tracker = new RouteTracker(await fetchRoute(this.fix, place, this.settings.tmapApiKey));
       this.navMessage = '';
+      // Fetch the map along the whole route now, while there's signal, so tunnels and server
+      // hiccups on the way don't leave gaps.
+      this.roads.prefetchRoute(this.tracker.route.points);
     } catch (e) {
       this.tracker = null;
       this.navMessage = e instanceof Error ? e.message : String(e);
     }
+    this.tick();
+  }
+
+  /** Download the map within 3 km of the current position for later use. */
+  prefetchHere(): void {
+    if (this.settings.demo || !this.fix) {
+      this.navMessage = this.settings.demo ? '데모 주행 중에는 지도를 받지 않습니다' : 'GPS 신호를 기다리는 중입니다';
+    } else this.roads.prefetchArea(this.fix, 3000);
+    this.tick();
+  }
+
+  async clearStoredMap(): Promise<void> {
+    await this.roads.clearStored();
     this.tick();
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "even-g2-hud",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "Driving HUD plugin for Even Realities G2 glasses",

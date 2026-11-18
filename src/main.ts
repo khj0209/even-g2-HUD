@@ -25,6 +25,10 @@ camera.onchange = () => app.updateSettings({ cameraAlerts: camera.checked });
 demo.onchange = () => app.updateSettings({ demo: demo.checked });
 tmapKey.onchange = () => app.updateSettings({ tmapApiKey: tmapKey.value.trim() });
 $('nav-stop').onclick = () => app.stopNavigation();
+$('map-prefetch').onclick = () => app.prefetchHere();
+$('map-clear').onclick = () => {
+  if (confirm('저장된 지도를 모두 지울까요?')) void app.clearStoredMap();
+};
 
 let lastPosition: LatLon | null = null;
 let searchError = '';
