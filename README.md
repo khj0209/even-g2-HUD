@@ -69,6 +69,24 @@ npm run pack
 
 `npm run pack` 은 `drive-hud.ehpk` 를 만듭니다. 업로드는 `evenhub login` 후 `evenhub create` / `evenhub upload` 를 사용합니다.
 
+## 배포 (GitHub Actions)
+
+`.github/workflows/release-beta.yml` 이 패키징 → Even Hub 업로드 → 베타 지정을 합니다. `app.json` 의 `version` 을 올린 뒤
+GitHub의 Actions 탭에서 **Release to Even Hub beta** 를 실행하면 됩니다.
+
+처음 한 번만, 맥에서 로그인한 뒤 로그인 정보를 저장소 시크릿으로 등록합니다.
+
+```bash
+npx evenhub login
+```
+
+```bash
+pbcopy < ~/.config/evenhub/credentials.yaml
+```
+
+GitHub 저장소 → Settings → Secrets and variables → Actions → New repository secret 에서 이름을
+`EVENHUB_CREDENTIALS` 로 하고 복사한 내용을 붙여넣습니다. 로그인이 만료되면 같은 과정을 다시 하면 됩니다.
+
 ## 구조
 
 ```

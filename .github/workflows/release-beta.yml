@@ -1,0 +1,65 @@
+name: Release to Even Hub beta
+
+# Packs the app, uploads the version in app.json to Even Hub and points the beta channel at it.
+# Needs the repository secret EVENHUB_CREDENTIALS: the contents of ~/.config/evenhub/credentials.yaml
+# from a machine where `evenhub login` was run (the CLI's login is interactive and cannot run here).
+on:
+  workflow_dispatch:
+    inputs:
+      changelog:
+        description: What changed (shown to testers, max 500 characters)
+        required: true
+      promote:
+        description: Put this version on the beta channel
+        type: boolean
+        default: true
+
+concurrency: even-hub-release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run pack
+
+      - name: Restore Even Hub login
+        env:
+          EVENHUB_CREDENTIALS: ${{ secrets.EVENHUB_CREDENTIALS }}
+        run: |
+          if [ -z "$EVENHUB_CREDENTIALS" ]; then
+            echo "::error::Repository secret EVENHUB_CREDENTIALS is not set. See README (배포)."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/xdg/evenhub"
+          printf '%s\n' "$EVENHUB_CREDENTIALS" > "$RUNNER_TEMP/xdg/evenhub/credentials.yaml"
+          chmod 600 "$RUNNER_TEMP/xdg/evenhub/credentials.yaml"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg" >> "$GITHUB_ENV"
+          npx evenhub self-check
+
+      - name: Upload build
+        env:
+          CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          set +e
+          npx evenhub upload drive-hud.ehpk -m "$CHANGELOG"
+          code=$?
+          set -e
+          # Exit 4 = this version already exists on Even Hub; re-running to promote it is fine.
+          if [ "$code" = 4 ]; then echo "::notice::Version already uploaded, skipping upload."; elif [ "$code" != 0 ]; then exit "$code"; fi
+
+      - name: Promote to beta
+        if: ${{ inputs.promote }}
+        run: |
+          version=$(node -p "require('./app.json').version")
+          npx evenhub promote "$version" --to beta
+          npx evenhub ls "$(node -p "require('./app.json').package_id")" --channels
