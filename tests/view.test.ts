@@ -77,6 +77,21 @@ describe('buildView minimap', () => {
   it('shows the map without a route, and nothing without a position', () => {
     const roads = {
       ways: [],
+      // One building 40 m ahead, one far away.
+      buildings: [
+        [
+          { lat: 37.4999, lon: 127.00045 },
+          { lat: 37.4999, lon: 127.0005 },
+          { lat: 37.5001, lon: 127.0005 },
+          { lat: 37.4999, lon: 127.00045 },
+        ],
+        [
+          { lat: 37.6, lon: 127.1 },
+          { lat: 37.6, lon: 127.1001 },
+          { lat: 37.6001, lon: 127.1001 },
+          { lat: 37.6, lon: 127.1 },
+        ],
+      ],
       cameras: [{ lat: 37.5, lon: 127.0005, maxspeed: 50 }],
       map: [
         // North–south street crossing 50 m ahead, and one 5 km away that must be clipped out.
@@ -89,6 +104,7 @@ describe('buildView minimap', () => {
     expect(v.minimap?.roads).toHaveLength(1);
     expect(v.minimap?.roads[0].points[0].y).toBeCloseTo(-25, 0); // crosses 50 m ahead
     expect(v.minimap?.cameras).toHaveLength(1);
+    expect(v.minimap?.buildings).toHaveLength(1);
     expect(buildView(input({ fix: null })).minimap).toBeNull();
   });
 
@@ -96,6 +112,12 @@ describe('buildView minimap', () => {
     const nav = { icon: 'left' as const, distToManeuver: 60, roadName: '', remainingDist: 100, remainingTime: 10 };
     const v = buildView(input({ route, nav, fix: eastbound }));
     expect(v.minimap?.turn).toMatchObject({ x: expect.closeTo(0, 0), y: expect.closeTo(-30, 0) });
+  });
+
+  it('keeps the redraw key steady through sub-pixel jitter but not real movement', () => {
+    const key = (lat: number) => buildView(input({ route, fix: { ...eastbound, lat } })).minimap?.key;
+    expect(key(37.500001)).toBe(key(37.5)); // ~10 cm
+    expect(key(37.5001)).not.toBe(key(37.5)); // ~11 m
   });
 
   it('zooms out with speed', () => {

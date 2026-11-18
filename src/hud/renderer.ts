@@ -72,8 +72,7 @@ export class HudRenderer {
       case 'turn':
         return [v.nav ? `${v.nav.icon}|${v.nav.dist}` : '', () => drawTurn(v.nav)];
       case 'minimap': {
-        // Round points so small GPS jitter doesn't repaint the image every tick.
-        const key = v.minimap ? minimapKey(v.minimap) : '';
+        const key = v.minimap?.key ?? '';
         return [key, () => drawMinimap(v.minimap)];
       }
       case 'info':
@@ -84,16 +83,3 @@ export class HudRenderer {
   }
 }
 
-const pts = (points: { x: number; y: number }[]) => points.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(' ');
-
-function minimapKey(m: NonNullable<HudView['minimap']>): string {
-  return [
-    m.scale,
-    m.headingKnown,
-    pts(m.route),
-    m.roads.map((r) => (r.major ? 'M' : 'm') + pts(r.points)).join('|'),
-    m.turn && pts([m.turn]),
-    m.dest && pts([m.dest]),
-    pts(m.cameras),
-  ].join('/');
-}

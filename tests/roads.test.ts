@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Fix } from '../src/core/types';
-import { buildQuery, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
+import { buildBuildingQuery, buildQuery, parseBuildings, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
 
 const fix = (lat: number, lon: number, heading: number | null): Fix => ({ lat, lon, heading, speed: 15, ts: 0 });
 
@@ -48,6 +48,7 @@ const data: RoadData = {
   ],
   cameras: [{ lat: 37.5, lon: 127.004, maxspeed: 50 }],
   map: [],
+  buildings: [],
 };
 
 describe('map roads', () => {
@@ -68,6 +69,24 @@ describe('map roads', () => {
 
   it('asks Overpass for drivable roads too', () => {
     expect(buildQuery({ lat: 37.5, lon: 127 })).toContain('[highway~"^(motorway|trunk|primary');
+  });
+});
+
+describe('buildings', () => {
+  it('asks for outlines only, in a small radius', () => {
+    expect(buildBuildingQuery({ lat: 37.5, lon: 127 })).toBe(
+      '[out:json][timeout:15];way(around:300,37.50000,127.00000)[building];out skel geom;',
+    );
+  });
+
+  it('keeps closed outlines and skips broken ones', () => {
+    const sq = [
+      { lat: 0, lon: 0 },
+      { lat: 0, lon: 1 },
+      { lat: 1, lon: 1 },
+      { lat: 0, lon: 0 },
+    ];
+    expect(parseBuildings({ elements: [{ type: 'way', geometry: sq }, { type: 'way', geometry: sq.slice(0, 2) }, { type: 'way' }] })).toEqual([sq]);
   });
 });
 

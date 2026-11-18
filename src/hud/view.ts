@@ -73,6 +73,16 @@ function routeWindow(route: Route, travelled: number, radius: number): LatLon[] 
   return points.slice(start, end + 1);
 }
 
+/** A small number that changes whenever the given object is replaced (new map data, new route). */
+const versions = new WeakMap<object, number>();
+let nextVersion = 1;
+function dataVersion(o: object | null | undefined): number {
+  if (!o) return 0;
+  let v = versions.get(o);
+  if (v == null) versions.set(o, (v = nextVersion++));
+  return v;
+}
+
 const inView = (p: MinimapPoint) => p.x >= VIEW.left && p.x <= VIEW.right && p.y >= VIEW.top && p.y <= VIEW.bottom;
 
 /** Whether segment a–b could cross the view (bounding-box test; the canvas clips the rest). */
@@ -130,7 +140,32 @@ function buildMinimap(input: HudInput): MinimapView | null {
   // Far enough to reach every corner of the view.
   const radius = Math.hypot(Math.max(CAR.x, MINIMAP.w - CAR.x), Math.max(CAR.y, MINIMAP.h - CAR.y)) * scale + 20;
 
-  const view: MinimapView = { scale, roads: [], route: [], turn: null, dest: null, cameras: [], headingKnown };
+  const view: MinimapView = {
+    scale,
+    buildings: [],
+    roads: [],
+    route: [],
+    turn: null,
+    dest: null,
+    cameras: [],
+    headingKnown,
+    // Position quantised to about a pixel and heading to 3°, so standing still or GPS jitter
+    // doesn't resend the image; map data and route identity so new downloads always show.
+    key: [
+      Math.round(fix.lat / (scale * 9e-6)),
+      Math.round(fix.lon / (scale * 1.13e-5)),
+      Math.round((fix.heading ?? 0) / 3),
+      scale,
+      dataVersion(roads),
+      dataVersion(route),
+      nav ? Math.round(nav.distToManeuver / scale) : '',
+    ].join(','),
+  };
+
+  for (const outline of roads?.buildings ?? []) {
+    const points = outline.map(project);
+    if (points.some((p, i) => i > 0 && segmentNearView(points[i - 1], p))) view.buildings.push(points);
+  }
 
   for (const way of roads?.map ?? [])
     for (const points of clip(way.points.map(project))) view.roads.push({ major: way.major, points });

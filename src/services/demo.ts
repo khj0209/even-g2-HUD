@@ -39,10 +39,30 @@ function demoStreets(): RoadData['map'] {
   return streets;
 }
 
+/** Two or three made-up buildings in every block of the demo grid. */
+function demoBuildings(): LatLon[][] {
+  const out: LatLon[][] = [];
+  const rect = (lat: number, lon: number, dLat: number, dLon: number): LatLon[] => [
+    { lat, lon },
+    { lat, lon: lon + dLon },
+    { lat: lat + dLat, lon: lon + dLon },
+    { lat: lat + dLat, lon },
+    { lat, lon },
+  ];
+  for (let lat = 37.4955; lat + 0.0012 < 37.507; lat += 0.0012)
+    for (let lon = 127.0235; lon + 0.0015 < 127.044; lon += 0.0015) {
+      out.push(rect(lat + 0.00015, lon + 0.0002, 0.0004, 0.0005));
+      out.push(rect(lat + 0.00065, lon + 0.0002, 0.0004, 0.00035));
+      out.push(rect(lat + 0.00015, lon + 0.0008, 0.0009, 0.0005));
+    }
+  return out;
+}
+
 export const demoRoadData = (): RoadData => ({
   ways: LEGS.map((leg, i) => ({ maxspeed: leg.limit, points: [PATH[i], PATH[i + 1]] })),
   cameras: [{ ...interpolate(PATH[1], PATH[2], 0.7), maxspeed: 60 }],
   map: demoStreets(),
+  buildings: demoBuildings(),
 });
 
 /** Position on the demo drive `elapsed` seconds in. Stops at the end. */

@@ -166,9 +166,13 @@ function arrow(ctx: CanvasRenderingContext2D, icon: ManeuverIcon): void {
   arrowHead(ctx, pts[pts.length - 2], pts[pts.length - 1]);
 }
 
-// Grey levels: the G2 shows brightness, so dim roads sit behind the bright route.
-const MINOR_ROAD = '#4a4a4a';
-const MAJOR_ROAD = '#8c8c8c';
+// Grey levels: the G2 shows brightness. Buildings are the dimmest layer, then roads, then the
+// route at full brightness; the route also gets a dark casing so it separates from the roads it
+// runs along. Levels are kept well clear of black, which the glasses show as nothing at all.
+const BUILDING_FILL = '#141414';
+const BUILDING_EDGE = '#5a5a5a';
+const MINOR_ROAD = '#828282';
+const MAJOR_ROAD = '#b4b4b4';
 
 function polyline(ctx: CanvasRenderingContext2D, points: MinimapPoint[]): void {
   ctx.beginPath();
@@ -188,13 +192,28 @@ export function drawMinimap(mm: MinimapView | null): HTMLCanvasElement {
   if (mm) {
     ctx.save();
     ctx.translate(w / 2, 68);
+    ctx.lineWidth = 1;
+    for (const b of mm.buildings) {
+      ctx.beginPath();
+      ctx.moveTo(b[0].x, b[0].y);
+      for (const p of b.slice(1)) ctx.lineTo(p.x, p.y);
+      ctx.closePath();
+      ctx.fillStyle = BUILDING_FILL;
+      ctx.fill();
+      ctx.strokeStyle = BUILDING_EDGE;
+      ctx.stroke();
+    }
     for (const road of mm.roads) {
       ctx.strokeStyle = road.major ? MAJOR_ROAD : MINOR_ROAD;
-      ctx.lineWidth = road.major ? 5 : 3;
+      ctx.lineWidth = road.major ? 6 : 3;
       polyline(ctx, road.points);
     }
     ctx.strokeStyle = ctx.fillStyle = '#fff';
     if (mm.route.length >= 2) {
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 11;
+      polyline(ctx, mm.route);
+      ctx.strokeStyle = '#fff';
       ctx.lineWidth = 6;
       polyline(ctx, mm.route);
     }
