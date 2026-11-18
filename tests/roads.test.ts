@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Fix } from '../src/core/types';
-import { buildBuildingQuery, buildQuery, parseBuildings, RoadDataService, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
+import { buildBuildingQuery, buildMapQuery, buildQuery, OverpassClient, parseBuildings, RoadDataService, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
 
 const fix = (lat: number, lon: number, heading: number | null): Fix => ({ lat, lon, heading, speed: 15, ts: 0 });
 
@@ -68,14 +68,16 @@ describe('map roads', () => {
   });
 
   it('asks Overpass for drivable roads too', () => {
-    expect(buildQuery({ lat: 37.5, lon: 127 })).toContain('[highway~"^(motorway|trunk|primary');
+    expect(buildMapQuery({ lat: 37.5, lon: 127 })).toContain('[highway~"^(motorway|trunk|primary');
+    // The speed-limit request stays small: no map roads in it.
+    expect(buildQuery({ lat: 37.5, lon: 127 })).not.toContain('highway~');
   });
 });
 
 describe('buildings', () => {
   it('asks for outlines only, in a small radius', () => {
     expect(buildBuildingQuery({ lat: 37.5, lon: 127 })).toBe(
-      '[out:json][timeout:15];way(around:300,37.50000,127.00000)[building];out skel geom;',
+      '[out:json][timeout:20];way(around:300,37.50000,127.00000)[building];out skel geom qt;',
     );
   });
 
@@ -118,32 +120,70 @@ describe('cameraAhead', () => {
   });
 });
 
+const settle = async () => {
+  for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 0));
+};
+
+describe('OverpassClient', () => {
+  it('fails over to the next server and then prefers the one that answered', async () => {
+    const calls: string[] = [];
+    const fetchFn = (async (url: string) => {
+      calls.push(url);
+      return url === 'a' ? new Response('', { status: 502 }) : new Response(JSON.stringify({ elements: [] }));
+    }) as typeof fetch;
+    const client = new OverpassClient(fetchFn, ['a', 'b']);
+    expect(await client.run('q')).toEqual({ elements: [] });
+    await client.run('q');
+    expect(calls).toEqual(['a', 'b', 'b']);
+  });
+
+  it('runs one request at a time', async () => {
+    let running = 0;
+    let maxRunning = 0;
+    const fetchFn = (async () => {
+      maxRunning = Math.max(maxRunning, ++running);
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      return new Response(JSON.stringify({ elements: [] }));
+    }) as typeof fetch;
+    const client = new OverpassClient(fetchFn, ['a']);
+    await Promise.all([client.run('1'), client.run('2'), client.run('3')]);
+    expect(maxRunning).toBe(1);
+  });
+
+  it('treats a timed-out query reported as 200 with a remark as a failure', async () => {
+    const fetchFn = (async () =>
+      new Response(JSON.stringify({ elements: [], remark: 'runtime error: Query timed out' }))) as typeof fetch;
+    await expect(new OverpassClient(fetchFn, ['a']).run('q')).rejects.toThrow('서버 처리 시간 초과');
+  });
+});
+
 describe('RoadDataService status', () => {
   const fix = { lat: 37.5, lon: 127, speed: 10, heading: 0, ts: 0 };
-  const flush = () => new Promise((r) => setTimeout(r, 0));
 
-  it('reports counts once both downloads arrive', async () => {
+  it('reports counts once all three downloads arrive', async () => {
     const fetchFn = (async (_url: string, init: RequestInit) => {
       const body = decodeURIComponent(String(init.body));
       const elements = body.includes('[building]')
         ? [{ type: 'way', geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }, { lat: 1, lon: 1 }] }]
-        : [{ type: 'way', tags: { highway: 'primary' }, geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }] }];
+        : body.includes('highway~')
+          ? [{ type: 'way', tags: { highway: 'primary' }, geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }] }]
+          : [{ type: 'way', tags: { highway: 'primary', maxspeed: '50' }, geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }] }];
       return new Response(JSON.stringify({ elements }));
     }) as typeof fetch;
-    const svc = new RoadDataService(fetchFn);
-    expect(svc.statusText()).toBe('도로 대기 · 건물 대기');
+    const svc = new RoadDataService(fetchFn, ['a']);
+    expect(svc.statusText()).toBe('제한속도 대기 · 도로 대기 · 건물 대기');
     svc.update(fix);
-    expect(svc.statusText()).toBe('도로 받는 중 · 건물 받는 중');
-    await flush();
-    await flush();
-    expect(svc.statusText()).toBe('도로 1 · 건물 1');
+    expect(svc.statusText()).toBe('제한속도 받는 중 · 도로 받는 중 · 건물 받는 중');
+    await settle();
+    expect(svc.statusText()).toBe('제한속도 1 · 도로 1 · 건물 1');
+    expect(svc.data.ways[0].maxspeed).toBe(50);
   });
 
-  it('shows the error when a download fails', async () => {
-    const svc = new RoadDataService((async () => new Response('', { status: 429 })) as typeof fetch);
+  it('shows the error when every server fails', async () => {
+    const svc = new RoadDataService((async () => new Response('', { status: 429 })) as typeof fetch, ['a', 'b']);
     svc.update(fix);
-    await flush();
-    await flush();
-    expect(svc.statusText()).toBe('도로 오류: Overpass HTTP 429 · 건물 오류: Overpass HTTP 429');
+    await settle();
+    expect(svc.statusText()).toBe('제한속도 오류: HTTP 429 · 도로 오류: HTTP 429 · 건물 오류: HTTP 429');
   });
 });
