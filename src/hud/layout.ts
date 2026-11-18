@@ -26,15 +26,17 @@ const EVENTS: Box = { id: 1, name: 'evt', kind: 'text', x: 0, y: 0, w: SCREEN.w,
 const BAND_Y = 160;
 
 export const MINIMAP = { w: 160, h: 100 };
+export const OVERVIEW = { w: 160, h: 100 };
 
 export const LAYOUT: Box[] = [
   EVENTS,
   { id: 2, name: 'info', kind: 'text', x: 68, y: 120, w: 440, h: 40 },
   { id: 3, name: 'turn', kind: 'image', x: 68, y: BAND_Y, w: 120, h: 100 },
+  // Speed with the limit sign beside it, in one image: the glasses allow only 4 image containers.
   { id: 4, name: 'speed', kind: 'image', x: 188, y: BAND_Y, w: 200, h: 100 },
-  { id: 5, name: 'limit', kind: 'image', x: 388, y: BAND_Y, w: 120, h: 100 },
-  // Fourth and last image container the glasses allow; sits above `info`, clear of the main cluster.
-  // Ids are kept contiguous (1–6): a non-contiguous id 7 once failed to render on real hardware.
+  { id: 5, name: 'alert', kind: 'text', x: 392, y: BAND_Y + 18, w: 150, h: 70 },
+  // Top corners: the minimap (right) and the whole-route overview (left), clear of the main cluster.
+  // Ids are kept contiguous: a non-contiguous id once failed to render on real hardware.
   {
     id: 6,
     name: 'minimap',
@@ -45,4 +47,5 @@ export const LAYOUT: Box[] = [
     h: MINIMAP.h,
     minInterval: 3000,
   },
+  { id: 7, name: 'overview', kind: 'image', x: 12, y: 12, w: OVERVIEW.w, h: OVERVIEW.h, minInterval: 5000 },
 ];

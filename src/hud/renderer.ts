@@ -1,4 +1,4 @@
-import { drawLimit, drawMinimap, drawSpeed, drawTurn } from './draw';
+import { drawMinimap, drawOverview, drawSpeed, drawTurn } from './draw';
 import { LAYOUT, type Box } from './layout';
 import type { HudView } from './view';
 
@@ -66,9 +66,11 @@ export class HudRenderer {
   private content(box: Box, v: HudView): [string, (() => HTMLCanvasElement)?] {
     switch (box.name) {
       case 'speed':
-        return [`${v.speed}|${v.unit}|${v.over}`, () => drawSpeed(v.speed, v.unit, v.over)];
-      case 'limit':
-        return [`${v.limit}|${v.over}|${v.alert}`, () => drawLimit(v.limit, v.over, v.alert)];
+        return [`${v.speed}|${v.unit}|${v.over}|${v.limit}`, () => drawSpeed(v.speed, v.unit, v.over, v.limit)];
+      case 'alert':
+        return [v.alert ? v.alert.replace(' ', '\n') : ' '];
+      case 'overview':
+        return [v.overview?.key ?? '', () => drawOverview(v.overview)];
       case 'turn':
         return [v.nav ? `${v.nav.icon}|${v.nav.dist}` : '', () => drawTurn(v.nav)];
       case 'minimap': {

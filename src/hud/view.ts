@@ -1,9 +1,9 @@
 import { compass, interpolate, localOffset, projectOnSegment } from '../core/geo';
 import { displayLimit, displaySpeed, formatClock, formatDistance, KMH_PER_MPS, unitLabel } from '../core/format';
-import type { CameraAlert, Fix, LatLon, ManeuverIcon, MinimapPoint, MinimapView, NavProgress, Settings } from '../core/types';
+import type { CameraAlert, Fix, LatLon, ManeuverIcon, MinimapPoint, MinimapView, NavProgress, OverviewView, Settings } from '../core/types';
 import type { RoadData } from '../services/roads';
 import type { Route } from '../services/routing';
-import { MINIMAP } from './layout';
+import { MINIMAP, OVERVIEW } from './layout';
 
 export interface HudInput {
   /** Latest fix, or null when GPS is missing/stale. */
@@ -34,6 +34,8 @@ export interface HudView {
   alert: string;
   /** Null without a position. */
   minimap: MinimapView | null;
+  /** Null when not navigating. */
+  overview: OverviewView | null;
 }
 
 /** Where the car sits in the minimap: centred, low, so most of the view is ahead. */
@@ -192,6 +194,77 @@ function buildMinimap(input: HudInput): MinimapView | null {
   return view;
 }
 
+/** The route projected into the overview box once per route (it never changes while guiding). */
+interface OverviewGeom {
+  points: MinimapPoint[];
+  project(p: LatLon): MinimapPoint;
+}
+const overviewGeoms = new WeakMap<Route, OverviewGeom>();
+const OVERVIEW_PAD = 10;
+
+function overviewGeom(route: Route): OverviewGeom {
+  const cached = overviewGeoms.get(route);
+  if (cached) return cached;
+  const lat0 = route.points.reduce((s, p) => s + p.lat, 0) / route.points.length;
+  const kx = 111320 * Math.cos((lat0 * Math.PI) / 180);
+  const ky = 110540;
+  const xs = route.points.map((p) => p.lon * kx);
+  const ys = route.points.map((p) => p.lat * ky);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const innerW = OVERVIEW.w - 2 * OVERVIEW_PAD;
+  const innerH = OVERVIEW.h - 2 * OVERVIEW_PAD;
+  // Same scale both ways (no distortion), centred; a degenerate route doesn't divide by zero.
+  const scale = Math.min(innerW / Math.max(maxX - minX, 1), innerH / Math.max(maxY - minY, 1));
+  const ox = OVERVIEW_PAD + (innerW - (maxX - minX) * scale) / 2;
+  const oy = OVERVIEW_PAD + (innerH - (maxY - minY) * scale) / 2;
+  const project = (p: LatLon): MinimapPoint => ({ x: ox + (p.lon * kx - minX) * scale, y: oy + (maxY - p.lat * ky) * scale });
+  const geom = { points: route.points.map(project), project };
+  overviewGeoms.set(route, geom);
+  return geom;
+}
+
+/** Drop points less than a pixel from the last one kept: a long route has thousands. */
+function thin(points: MinimapPoint[]): MinimapPoint[] {
+  const out: MinimapPoint[] = [];
+  for (const p of points) {
+    const last = out[out.length - 1];
+    if (!last || Math.abs(p.x - last.x) + Math.abs(p.y - last.y) >= 1) out.push(p);
+  }
+  const end = points[points.length - 1];
+  if (end && out[out.length - 1] !== end) out.push(end);
+  return out;
+}
+
+/** Whole route, north-up, split into driven and remaining parts, with the car and destination. */
+function buildOverview(input: HudInput): OverviewView | null {
+  const { route, nav, fix } = input;
+  if (!route || route.points.length < 2) return null;
+  const geom = overviewGeom(route);
+  const travelled = nav ? route.distance - nav.remainingDist : fix ? travelledAt(route, fix) : 0;
+  let i = 0;
+  while (i + 2 < route.points.length && route.cum[i + 1] <= travelled) i++;
+  const split = geom.project(pointAlong(route, travelled));
+  const car = fix ? geom.project(fix) : null;
+  const dest = geom.points[geom.points.length - 1];
+  return {
+    done: thin([...geom.points.slice(0, i + 1), split]),
+    ahead: thin([split, ...geom.points.slice(i + 1)]),
+    car,
+    heading: fix?.heading ?? null,
+    dest,
+    key: [
+      dataVersion(route),
+      Math.round(split.x),
+      Math.round(split.y),
+      car ? `${Math.round(car.x)},${Math.round(car.y)}` : '',
+      fix?.heading != null ? Math.round(fix.heading / 15) : '',
+    ].join('|'),
+  };
+}
+
 export function buildView(input: HudInput): HudView {
   const { fix, camera, nav, settings, now } = input;
   const { unit } = settings;
@@ -218,6 +291,7 @@ export function buildView(input: HudInput): HudView {
     info,
     alert: cam ? `단속 ${formatDistance(cam.dist, unit)}` : '',
     minimap: buildMinimap(input),
+    overview: buildOverview(input),
   };
 }
 

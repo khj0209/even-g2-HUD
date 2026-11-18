@@ -14,7 +14,7 @@ import { pngBytes } from './draw';
 import { LAYOUT, type Box } from './layout';
 import type { HudSink } from './renderer';
 
-const IMAGE_ORDER = ['speed', 'limit', 'turn', 'minimap'];
+const IMAGE_ORDER = ['speed', 'turn', 'minimap', 'overview'];
 const SPEED_ID = LAYOUT.find((b) => b.name === 'speed')!.id;
 const imagePriority = (box: Box) => {
   const i = IMAGE_ORDER.indexOf(box.name);

@@ -1,5 +1,5 @@
-import type { ManeuverIcon, MinimapPoint, MinimapView } from '../core/types';
-import { MINIMAP } from './layout';
+import type { ManeuverIcon, MinimapPoint, MinimapView, OverviewView } from '../core/types';
+import { MINIMAP, OVERVIEW } from './layout';
 
 /** Bitmaps for the glasses: white on black, which the G2 shows as green on transparent. */
 
@@ -35,15 +35,30 @@ function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w:
   ctx.closePath();
 }
 
-/** Large speed readout, centred, with the unit underneath; boxed when over the limit. */
-export function drawSpeed(speed: string, unit: string, over: boolean): HTMLCanvasElement {
+/**
+ * Speed, with the limit sign beside it when there is one (one image, since the glasses allow only
+ * four). Boxed when over the limit.
+ */
+export function drawSpeed(speed: string, unit: string, over: boolean, limit: number | null): HTMLCanvasElement {
   const [c, ctx] = canvas(200, 100);
+  const cx = limit == null ? 100 : 72;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   ctx.font = `bold 76px ${FONT}`;
-  ctx.fillText(speed, 100, 68, 180);
+  ctx.fillText(speed, cx, 68, limit == null ? 180 : 128);
   ctx.font = `600 18px ${FONT}`;
-  ctx.fillText(unit, 100, 91);
+  ctx.fillText(unit, cx, 91);
+  if (limit != null) {
+    // Round limit sign, heavier when over.
+    ctx.lineWidth = over ? 8 : 5;
+    ctx.beginPath();
+    ctx.arc(160, 48, 31 - ctx.lineWidth / 2, 0, Math.PI * 2);
+    ctx.stroke();
+    const text = String(limit);
+    ctx.font = `bold ${text.length > 2 ? 21 : 28}px ${FONT}`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 160, 50);
+  }
   if (over) {
     ctx.lineWidth = 4;
     roundedRectPath(ctx, 3, 3, 194, 94, 14);
@@ -59,24 +74,6 @@ function caption(ctx: CanvasRenderingContext2D, text: string): void {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   ctx.fillText(text, 60, 95, 116);
-}
-
-/** Right-hand block: round speed-limit sign with the camera warning under it. Either may be absent. */
-export function drawLimit(limit: number | null, over: boolean, alert: string): HTMLCanvasElement {
-  const [c, ctx] = canvas(120, 100);
-  if (limit != null) {
-    ctx.lineWidth = over ? 9 : 6;
-    ctx.beginPath();
-    ctx.arc(60, 36, 34 - ctx.lineWidth / 2, 0, Math.PI * 2);
-    ctx.stroke();
-    const text = String(limit);
-    ctx.font = `bold ${text.length > 2 ? 24 : 32}px ${FONT}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, 60, 38);
-  }
-  if (alert) caption(ctx, alert);
-  return c;
 }
 
 /** Left-hand block: turn arrow with the distance to the turn under it. Null draws nothing. */
@@ -264,6 +261,49 @@ export function drawMinimap(mm: MinimapView | null): HTMLCanvasElement {
   ctx.lineWidth = 2;
   roundedRectPath(ctx, 1, 1, w - 2, h - 2, 12);
   ctx.stroke();
+  return c;
+}
+
+/** Top-left overview of the whole route: dim where already driven, bright ahead. Blank when not guiding. */
+export function drawOverview(ov: OverviewView | null): HTMLCanvasElement {
+  const { w, h } = OVERVIEW;
+  const [c, ctx] = canvas(w, h);
+  if (!ov) return c;
+  ctx.lineWidth = 2;
+  roundedRectPath(ctx, 1, 1, w - 2, h - 2, 12);
+  ctx.stroke();
+
+  ctx.lineWidth = 3;
+  if (ov.done.length >= 2) {
+    ctx.strokeStyle = '#6a6a6a';
+    polyline(ctx, ov.done);
+  }
+  if (ov.ahead.length >= 2) {
+    ctx.strokeStyle = '#fff';
+    polyline(ctx, ov.ahead);
+  }
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(ov.dest.x - 4, ov.dest.y - 4, 8, 8);
+
+  if (ov.car) {
+    // The car: an arrow along the heading (north-up map), or a dot without one.
+    ctx.save();
+    ctx.translate(ov.car.x, ov.car.y);
+    ctx.beginPath();
+    if (ov.heading != null) {
+      ctx.rotate((ov.heading * Math.PI) / 180);
+      ctx.moveTo(0, -8);
+      ctx.lineTo(6, 6);
+      ctx.lineTo(0, 3);
+      ctx.lineTo(-6, 6);
+      ctx.closePath();
+    } else ctx.arc(0, 0, 5, 0, Math.PI * 2);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+    ctx.fill();
+    ctx.restore();
+  }
   return c;
 }
 

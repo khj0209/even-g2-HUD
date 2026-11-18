@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, type Fix } from '../src/core/types';
 import { buildView, LimitFilter, minimapScale, type HudInput } from '../src/hud/view';
 import { FixNormalizer } from '../src/services/location';
+import { routeFromPolyline } from '../src/services/routing';
 
 const now = new Date(2026, 0, 1, 14, 5);
 const fix = (kmh: number): Fix => ({ lat: 37.5, lon: 127, speed: kmh / 3.6, heading: 45, ts: now.getTime() });
@@ -134,6 +135,54 @@ describe('buildView minimap', () => {
     const longLeg = { points: [{ lat: 37.5, lon: 127 }, { lat: 37.509, lon: 127 }], cum: [0, 1001], steps: [], distance: 1001, duration: 60 };
     const v = buildView(input({ route: longLeg, fix: { lat: 37.5045, lon: 127, speed: 10, heading: 0, ts: now.getTime() } }));
     expect(v.minimap?.route.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('buildView overview', () => {
+  // North 1.1 km, then east 0.9 km.
+  const pts = [
+    { lat: 37.5, lon: 127.0 },
+    { lat: 37.51, lon: 127.0 },
+    { lat: 37.51, lon: 127.01 },
+  ];
+  const route = routeFromPolyline(pts);
+
+  it('is only there while guiding', () => {
+    expect(buildView(input({ route: null })).overview).toBeNull();
+  });
+
+  it('fits the whole route north-up inside the box without distortion', () => {
+    const v = buildView(input({ route, fix: { lat: 37.5, lon: 127, speed: 10, heading: 0, ts: now.getTime() } }))!;
+    const all = [...v.overview!.done, ...v.overview!.ahead];
+    for (const p of all) {
+      expect(p.x).toBeGreaterThanOrEqual(9.9);
+      expect(p.x).toBeLessThanOrEqual(150.1);
+      expect(p.y).toBeGreaterThanOrEqual(9.9);
+      expect(p.y).toBeLessThanOrEqual(90.1);
+    }
+    const [start, corner, end] = v.overview!.ahead;
+    expect(corner.y).toBeLessThan(start.y); // north is up
+    expect(end.x).toBeGreaterThan(corner.x); // east is right
+    // Legs of 1112 m and 883 m keep their ratio.
+    expect(Math.abs(start.y - corner.y) / Math.abs(end.x - corner.x)).toBeCloseTo(1112 / 883, 1);
+    expect(v.overview!.dest).toEqual(end);
+  });
+
+  it('splits the route where the car is', () => {
+    const nav = { icon: 'right' as const, distToManeuver: 556, roadName: '', remainingDist: route.distance - 556, remainingTime: 60 };
+    const fix = { lat: 37.505, lon: 127, speed: 10, heading: 0, ts: now.getTime() };
+    const v = buildView(input({ route, nav, fix }))!;
+    const split = v.overview!.ahead[0];
+    expect(v.overview!.done[v.overview!.done.length - 1]).toEqual(split);
+    expect(split).toMatchObject({ x: expect.closeTo(v.overview!.car!.x, 0), y: expect.closeTo(v.overview!.car!.y, 0) });
+    expect(v.overview!.ahead).toHaveLength(3); // split, corner, end
+  });
+
+  it('changes its key as the car moves along, not with tiny jitter', () => {
+    const at = (lat: number) =>
+      buildView(input({ route, fix: { lat, lon: 127, speed: 10, heading: 0, ts: now.getTime() } })).overview!.key;
+    expect(at(37.50001)).toBe(at(37.5));
+    expect(at(37.505)).not.toBe(at(37.5));
   });
 });
 

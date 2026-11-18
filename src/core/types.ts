@@ -88,3 +88,16 @@ export interface MinimapView {
   /** Changes whenever the picture would: car position to about a pixel, heading, zoom and map data. */
   key: string;
 }
+
+/** The whole route, north-up, fitted into the overview box (pixels from its top-left). */
+export interface OverviewView {
+  /** Route already driven (drawn dim) and still ahead (bright). */
+  done: MinimapPoint[];
+  ahead: MinimapPoint[];
+  car: MinimapPoint | null;
+  /** Direction of travel, degrees clockwise from north; null if unknown. */
+  heading: number | null;
+  dest: MinimapPoint;
+  /** Changes whenever the picture would. */
+  key: string;
+}
