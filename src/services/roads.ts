@@ -37,8 +37,9 @@ export interface RoadData {
 
 export const emptyRoadData = (): RoadData => ({ ways: [], cameras: [], map: [], buildings: [] });
 
-export const DRIVABLE = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)(_link)?$/;
-const MAJOR = /^(motorway|trunk|primary|secondary)(_link)?$/;
+import { DRIVABLE, MAJOR, parseMaxspeed } from './tileformat';
+
+export { DRIVABLE, parseMaxspeed };
 
 /**
  * Public Overpass servers, tried in order. They are free and often overloaded (timeouts, 429, 502),
@@ -50,15 +51,6 @@ export const OVERPASS_ENDPOINTS = [
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 const REQUEST_TIMEOUT_MS = 30000;
-
-/** OSM maxspeed tag → km/h. Handles "50", "50 km/h", "30 mph"; anything else (e.g. "signals") is null. */
-export function parseMaxspeed(tag: string | undefined): number | null {
-  if (!tag) return null;
-  const m = /^\s*(\d+(?:\.\d+)?)\s*(mph|km\/h|kmh|kph)?\s*$/i.exec(tag);
-  if (!m) return null;
-  const v = parseFloat(m[1]);
-  return Math.round(m[2]?.toLowerCase() === 'mph' ? v * 1.609344 : v);
-}
 
 export function parseOverpass(json: any): RoadData {
   const data = emptyRoadData();

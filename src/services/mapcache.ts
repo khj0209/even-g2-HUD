@@ -1,4 +1,5 @@
 import { destination, distance } from '../core/geo';
+import { decodeTile, TILE_LAT, TILE_LON, tileOf, type Tile } from './tileformat';
 import type { Fix, LatLon } from '../core/types';
 import {
   DRIVABLE,
@@ -19,8 +20,6 @@ import {
  * Map data is fetched and stored in fixed tiles of about 1.1 × 1.1 km (in Korea), so that an area
  * driven once never has to be downloaded again, and a whole route can be fetched ahead of time.
  */
-export const TILE_LAT = 0.01;
-export const TILE_LON = 0.0125;
 
 /**
  * Two downloads per tile: roads (speed limits, cameras and every drivable road, in one request) and
@@ -30,14 +29,7 @@ export const TILE_LON = 0.0125;
 export type Layer = 'roads' | 'buildings';
 const LAYERS: Layer[] = ['roads', 'buildings'];
 
-export interface Tile {
-  /** Row (latitude) index. */
-  x: number;
-  /** Column (longitude) index. */
-  y: number;
-}
-
-export const tileOf = (p: LatLon): Tile => ({ x: Math.floor(p.lat / TILE_LAT), y: Math.floor(p.lon / TILE_LON) });
+export { tileOf, type Tile };
 const tileKey = (layer: Layer, t: Tile) => `v2:${layer}:${t.x}:${t.y}`;
 
 /** The tile and its neighbours: every point within ~1.1 km of `p` is in one of them. */
@@ -181,6 +173,77 @@ export function openTileStore(): TileStore {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Pre-built Korean tiles
+
+/**
+ * Roads, limits and cameras for all of South Korea, cut into tiles by the repository's map-tiles
+ * workflow (.github/workflows/map-tiles.yml) from the OpenStreetMap extract and served from GitHub
+ * Pages. Much faster and more reliable than the public Overpass servers, which remain the fallback
+ * (and the only source of buildings, which are too big to bundle).
+ */
+export const BUNDLED_BASE = 'https://khj0209.github.io/even-g2-HUD';
+const KOREA = { s: 33, w: 124.5, n: 38.7, e: 131.9 };
+const BUNDLED_RECHECK_MS = 10 * 60 * 1000;
+
+export class BundledSource {
+  state: 'checking' | 'yes' | 'no' = 'checking';
+  /** Date of the OpenStreetMap data the tiles were built from. */
+  built = '';
+  private ready: Promise<void>;
+  private retryAt = 0;
+
+  constructor(
+    private fetchFn: typeof fetch,
+    private base = BUNDLED_BASE,
+  ) {
+    this.ready = this.check();
+  }
+
+  private async check(): Promise<void> {
+    try {
+      const r = await this.fetchFn(`${this.base}/index.json`, { signal: AbortSignal.timeout(10000) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      if (j?.version !== 1) throw new Error('unknown tile version');
+      this.built = String(j.built ?? '');
+      this.state = 'yes';
+    } catch (e) {
+      console.warn('[bundled]', e);
+      this.state = 'no';
+      this.retryAt = Date.now() + BUNDLED_RECHECK_MS;
+    }
+  }
+
+  /** Resolves once we know whether the tiles are available (re-checking now and then if not). */
+  async whenKnown(): Promise<void> {
+    if (this.state === 'no' && Date.now() > this.retryAt) {
+      this.state = 'checking';
+      this.ready = this.check();
+    }
+    await this.ready;
+  }
+
+  covers(t: Tile): boolean {
+    const lat = (t.x + 0.5) * TILE_LAT;
+    const lon = (t.y + 0.5) * TILE_LON;
+    return this.state === 'yes' && lat > KOREA.s && lat < KOREA.n && lon > KOREA.w && lon < KOREA.e;
+  }
+
+  async fetchTile(t: Tile): Promise<TileData> {
+    const r = await this.fetchFn(`${this.base}/v1/${t.x}/${t.y}.json`, { signal: AbortSignal.timeout(15000) });
+    // No file: nothing drivable in this tile (sea, mountains).
+    if (r.status === 404) return { ways: [], cameras: [], map: [] };
+    if (!r.ok) throw new Error(`저장소 지도 HTTP ${r.status}`);
+    const { ways, cameras } = decodeTile(await r.json());
+    return {
+      ways: ways.filter((w) => w.maxspeed > 0).map((w) => ({ maxspeed: w.maxspeed, points: w.points })),
+      map: ways.filter((w) => w.drivable).map((w) => ({ major: w.major, points: w.points })),
+      cameras,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Download queue
 
 /** Stored tiles older than this are downloaded again (roads and limits do change). */
@@ -217,9 +280,22 @@ class TileCache {
   constructor(
     private store: TileStore,
     private client: OverpassClient,
+    readonly bundled: BundledSource,
     private onChange: () => void,
   ) {
     void this.refreshCount();
+  }
+
+  /** Whether this job has to go to the (rate-limited, sometimes overloaded) Overpass servers. */
+  private viaOverpass(job: Job): boolean {
+    return job.layer !== 'roads' || !this.bundled.covers(job.tile);
+  }
+
+  /** Next job to run: the first in priority order, skipping Overpass jobs while paused. */
+  private nextJob(): Job | null {
+    const paused = this.pausedUntil > Date.now();
+    const i = paused ? this.queue.findIndex((j) => !this.viaOverpass(j)) : 0;
+    return i < 0 || !this.queue.length ? null : this.queue.splice(i, 1)[0];
   }
 
   /** Make sure these tiles get loaded; cheap to call repeatedly. */
@@ -270,19 +346,24 @@ class TileCache {
     if (this.running) return;
     this.running = true;
     try {
-      for (let job = this.queue.shift(); job; job = this.queue.shift()) {
-        const wait = this.pausedUntil - Date.now();
-        if (wait > 0) {
+      while (this.queue.length) {
+        if (this.queue.some((j) => j.layer === 'roads')) await this.bundled.whenKnown();
+        const job = this.nextJob();
+        if (!job) {
+          // Only Overpass jobs left and the servers asked us to back off: wait it out.
           this.onChange();
-          await new Promise((r) => setTimeout(r, wait));
+          await new Promise((r) => setTimeout(r, Math.max(0, this.pausedUntil - Date.now())));
+          continue;
         }
         this.busy.add(job.key);
         try {
-          const data = parseLayer(job.layer, await this.client.run(tileQuery(job.layer, job.tile)));
+          const data = this.viaOverpass(job)
+            ? parseLayer(job.layer, await this.client.run(tileQuery(job.layer, job.tile)))
+            : await this.bundled.fetchTile(job.tile);
           if (job.prio === 0) this.mem.set(job.key, data);
           this.failures.delete(job.key);
           this.error = '';
-          this.pauses = 0;
+          if (this.viaOverpass(job)) this.pauses = 0;
           await this.store.put(job.key, { savedAt: Date.now(), data }).catch((e) => console.warn('[mapcache] store', e));
           void this.refreshCount();
         } catch (e) {
@@ -391,8 +472,14 @@ export class RoadDataService {
     endpoints = OVERPASS_ENDPOINTS,
     store: TileStore = openTileStore(),
     minGapMs = 1000,
+    bundledBase = BUNDLED_BASE,
   ) {
-    this.cache = new TileCache(store, new OverpassClient(fetchFn, endpoints, minGapMs), () => this.rebuild());
+    this.cache = new TileCache(
+      store,
+      new OverpassClient(fetchFn, endpoints, minGapMs),
+      new BundledSource(fetchFn, bundledBase),
+      () => this.rebuild(),
+    );
   }
 
   /** Call on every fix; cheap unless the car has moved into a new tile. */
@@ -451,6 +538,8 @@ export class RoadDataService {
     const { total, done } = this.cache.prefetch;
     if (total) parts.push(`미리 받기 ${done}/${total}`);
     parts.push(`저장된 구역 ${this.cache.stored}`);
+    const b = this.cache.bundled;
+    parts.push(b.state === 'yes' ? `도로 원본: 저장소${b.built ? ` (${b.built})` : ''}` : b.state === 'no' ? '도로 원본: 공개 서버' : '도로 원본 확인 중');
     const paused = Math.ceil((this.cache.pausedUntil - Date.now()) / 1000);
     if (paused > 0) parts.push(`서버 혼잡, ${paused}초 후 다시 시도`);
     if (this.cache.error) parts.push(`오류: ${this.cache.error}`);

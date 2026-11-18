@@ -13,6 +13,7 @@ import {
 } from './services/location';
 import { deadReckon, DR_START_MS, MapMatcher, type PathRef } from './services/matching';
 import { RoadDataService } from './services/mapcache';
+import { TmapLimitService } from './services/tmaplimit';
 import { cameraAhead, matchLimit, type RoadData } from './services/roads';
 import { fetchRoute, RouteTracker, type Place } from './services/routing';
 
@@ -43,6 +44,7 @@ export class App {
   private source: LocationSource | null = null;
   private normalizer = new FixNormalizer();
   private matcher = new MapMatcher();
+  private tmapLimits = new TmapLimitService();
   /** Where the last real fix was matched on the map, for dead reckoning through tunnels. */
   private lastRef: PathRef | null = null;
   private roadPaths: { data: RoadData | null; paths: ReturnType<typeof roadPaths> } = { data: null, paths: [] };
@@ -173,6 +175,7 @@ export class App {
       if (!fix) return; // skipped: inaccurate, duplicate or a glitch
       this.fix = this.matcher.snap(fix, this.tracker?.route.points ?? null, this.mapPaths());
       this.lastRef = this.matcher.last;
+      if (!this.settings.demo) this.tmapLimits.update(this.fix, this.settings.tmapApiKey, this.matcher.road);
       this.tick();
     });
   }
@@ -219,7 +222,10 @@ export class App {
     let nav = null;
     if (fix) {
       if (!this.settings.demo) this.roads.update(fix);
-      limit = this.limitFilter.next(matchLimit(this.roads.data, fix));
+      // Tmap's limit (if a key is set and it has one here) over OpenStreetMap's: it's what Korean
+      // navigation uses and far more complete.
+      const tmap = this.settings.demo ? null : this.tmapLimits.limitAt(fix);
+      limit = this.limitFilter.next(tmap ?? matchLimit(this.roads.data, fix));
       camera = cameraAhead(this.roads.data, fix);
       nav = this.trackRoute(fix);
     }
@@ -233,7 +239,9 @@ export class App {
       destination: this.destination,
       position: this.fix && { lat: this.fix.lat, lon: this.fix.lon },
       navMessage: this.navMessage,
-      mapStatus: this.settings.demo ? '지도: 데모 데이터' : `지도: ${this.roads.statusText()}`,
+      mapStatus: this.settings.demo
+        ? '지도: 데모 데이터'
+        : `지도: ${this.roads.statusText()}${this.settings.tmapApiKey ? ` · ${this.tmapLimits.statusText()}` : ''}`,
     };
     for (const fn of this.listeners) fn(state);
   }

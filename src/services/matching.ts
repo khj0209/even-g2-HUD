@@ -99,6 +99,11 @@ export class MapMatcher {
   }
 
   private prev: LatLon[] | null = null;
+
+  /** The road the last fix was matched to (identity only), or null. */
+  get road(): LatLon[] | null {
+    return this.prev;
+  }
 }
 
 /** Start extrapolating after this long without a fix (GPS normally arrives every 0.5–1 s). */

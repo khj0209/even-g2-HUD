@@ -1,0 +1,67 @@
+name: Build Korean map tiles
+
+# Cuts roads, speed limits and speed cameras for South Korea out of the OpenStreetMap extract and
+# publishes them on GitHub Pages, where the app fetches them before falling back to the public
+# Overpass servers (see src/services/mapcache.ts). Needs Pages enabled with "GitHub Actions" as
+# the source (repository Settings → Pages).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 18 2 * *' # monthly, early morning in Korea
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: map-tiles
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install osmium
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+
+      - name: Download the South Korea extract
+        run: |
+          curl -fsSL -o korea.osm.pbf https://download.geofabrik.de/asia/south-korea-latest.osm.pbf
+          ls -la korea.osm.pbf
+          osmium fileinfo -g header.option.osmosis_replication_timestamp korea.osm.pbf | cut -c1-10 > built.txt
+          echo "Data as of $(cat built.txt)"
+
+      - name: Keep roads and speed cameras
+        run: |
+          osmium tags-filter korea.osm.pbf w/highway n/highway=speed_camera -o roads.osm.pbf
+          osmium export roads.osm.pbf -f geojsonseq -x print_record_separator=false \
+            --geometry-types=point,linestring -o roads.geojsonseq
+          ls -la roads.osm.pbf roads.geojsonseq
+
+      - name: Cut into tiles
+        run: |
+          node --max-old-space-size=12000 scripts/build-tiles.ts roads.geojsonseq site "$(cat built.txt)"
+          du -sh site
+          find site -type f | wc -l
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

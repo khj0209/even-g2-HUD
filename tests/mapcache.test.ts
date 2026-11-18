@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Fix } from '../src/core/types';
+import { encodeTile } from '../src/services/tileformat';
 import {
   MemoryTileStore,
   mergeTiles,
@@ -20,7 +21,8 @@ const fix = (lat = 37.5355, lon = 126.6431, kmh = 30): Fix => ({ lat, lon, speed
 /** Fake Overpass: answers by layer, and records every query. */
 function fakeOverpass(status = 200) {
   const queries: string[] = [];
-  const fetchFn = (async (_url: string, init: RequestInit) => {
+  const fetchFn = (async (url: string, init: RequestInit) => {
+    if (url.includes('github.io')) return new Response('', { status: 404 }); // no pre-built tiles
     const q = decodeURIComponent(String(init.body)).slice(5);
     queries.push(q);
     if (status !== 200) return new Response('', { status });
@@ -82,7 +84,7 @@ describe('RoadDataService', () => {
     expect(queries.slice(0, 9).every((q) => q.includes('[maxspeed]'))).toBe(true);
     expect(svc.data.ways).toHaveLength(1); // deduplicated across the 9 tiles
     expect(svc.data.map).toHaveLength(2);
-    expect(svc.statusText()).toBe('제한속도 1 · 도로 2 · 건물 1 · 저장된 구역 18');
+    expect(svc.statusText()).toBe('제한속도 1 · 도로 2 · 건물 1 · 저장된 구역 18 · 도로 원본: 공개 서버');
   });
 
   it('reuses stored tiles instead of downloading again', async () => {
@@ -154,5 +156,74 @@ describe('RoadDataService', () => {
     svc.update(fix());
     await settle();
     expect(svc.data.ways).toHaveLength(1);
+  });
+});
+
+describe('pre-built tiles', () => {
+  const BASE = 'https://example.github.io/tiles';
+  /** Serves an index and one roads tile from the "repository", and buildings from "Overpass". */
+  function fake(opts: { index?: boolean; overpassStatus?: number } = {}) {
+    const urls: string[] = [];
+    const car = tileOf(fix());
+    const fetchFn = (async (url: string) => {
+      urls.push(url);
+      if (url === `${BASE}/index.json`)
+        return opts.index === false ? new Response('', { status: 404 }) : new Response(JSON.stringify({ version: 1, built: '2026-11-18' }));
+      if (url.startsWith(BASE)) {
+        if (url !== `${BASE}/v1/${car.x}/${car.y}.json`) return new Response('', { status: 404 });
+        return new Response(
+          encodeTile(
+            [
+              { drivable: true, major: true, maxspeed: 60, points: [{ lat: 37.535, lon: 126.64 }, { lat: 37.536, lon: 126.641 }] },
+              { drivable: false, major: false, maxspeed: 30, points: [{ lat: 37.535, lon: 126.64 }, { lat: 37.534, lon: 126.64 }] },
+            ],
+            [{ lat: 37.5355, lon: 126.6431, maxspeed: 50 }],
+          ),
+        );
+      }
+      if (opts.overpassStatus) return new Response('', { status: opts.overpassStatus });
+      return new Response(JSON.stringify({ elements: [{ type: 'way', id: 3, geometry: [{ lat: 0, lon: 0 }, { lat: 0, lon: 1 }, { lat: 1, lon: 1 }] }] }));
+    }) as typeof fetch;
+    return { fetchFn, urls };
+  }
+
+  it('takes roads, limits and cameras from the repository, and only buildings from Overpass', async () => {
+    const { fetchFn, urls } = fake();
+    const svc = new RoadDataService(fetchFn, ['overpass'], new MemoryTileStore(), 0, BASE);
+    svc.update(fix());
+    await settle();
+    expect(urls.filter((u) => u.startsWith(BASE + '/v1/'))).toHaveLength(9);
+    expect(urls.filter((u) => u === 'overpass')).toHaveLength(9); // buildings
+    expect(svc.data.ways.map((w) => w.maxspeed).sort()).toEqual([30, 60]);
+    expect(svc.data.map).toHaveLength(1); // the non-drivable way only carries a limit
+    expect(svc.data.cameras[0].maxspeed).toBe(50);
+    expect(svc.statusText()).toContain('도로 원본: 저장소 (2026-11-18)');
+  });
+
+  it('falls back to Overpass for roads when the repository has no tiles', async () => {
+    const { fetchFn, urls } = fake({ index: false });
+    const svc = new RoadDataService(fetchFn, ['overpass'], new MemoryTileStore(), 0, BASE);
+    svc.update(fix());
+    await settle();
+    expect(urls.filter((u) => u.startsWith(BASE + '/v1/'))).toHaveLength(0);
+    expect(urls.filter((u) => u === 'overpass')).toHaveLength(18);
+    expect(svc.statusText()).toContain('도로 원본: 공개 서버');
+  });
+
+  it('keeps loading repository tiles while Overpass is refusing', async () => {
+    const { fetchFn } = fake({ overpassStatus: 504 });
+    const svc = new RoadDataService(fetchFn, ['overpass'], new MemoryTileStore(), 0, BASE);
+    svc.update(fix());
+    await settle();
+    expect(svc.data.ways).toHaveLength(2);
+    expect(svc.statusText()).toMatch(/서버 혼잡/);
+  });
+
+  it('uses Overpass outside Korea', async () => {
+    const { fetchFn, urls } = fake();
+    const svc = new RoadDataService(fetchFn, ['overpass'], new MemoryTileStore(), 0, BASE);
+    svc.update({ ...fix(), lat: 48.85, lon: 2.35 });
+    await settle();
+    expect(urls.filter((u) => u.startsWith(BASE + '/v1/'))).toHaveLength(0);
   });
 });
