@@ -67,8 +67,8 @@ export function buildQuery(c: LatLon): string {
   );
 }
 
-const MAP_RADIUS = 450;
-const MAP_REFETCH_DIST = 200;
+const MAP_RADIUS = 700;
+const MAP_REFETCH_DIST = 250;
 
 /** Every drivable road nearby, for the minimap. Only the `highway` tag is needed. */
 export function buildMapQuery(c: LatLon): string {
@@ -76,7 +76,7 @@ export function buildMapQuery(c: LatLon): string {
   return `[out:json][timeout:20];way(around:${MAP_RADIUS},${at})[highway~"${DRIVABLE.source}"];out body geom qt;`;
 }
 
-const BUILDING_RADIUS = 300;
+const BUILDING_RADIUS = 400;
 /** Buildings only matter at city speeds and change block by block, so they use a smaller area. */
 const BUILDING_REFETCH_DIST = 150;
 const BUILDING_MAX_KMH = 70;

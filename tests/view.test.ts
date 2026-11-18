@@ -70,8 +70,8 @@ describe('buildView minimap', () => {
     expect(v.minimap?.headingKnown).toBe(true);
     expect(v.minimap?.route[0]).toMatchObject({ x: expect.closeTo(0, 5), y: expect.closeTo(0, 5) });
     expect(v.minimap?.route[1].x).toBeCloseTo(0, 0);
-    expect(v.minimap?.route[1].y).toBeCloseTo(-50, 0); // 100 m at 2 m/px; negative y = ahead
-    expect(v.minimap?.dest).toMatchObject({ x: expect.closeTo(0, 0), y: expect.closeTo(-50, 0) });
+    expect(v.minimap?.route[1].y).toBeCloseTo(-33.3, 0); // 100 m at 3 m/px; negative y = ahead
+    expect(v.minimap?.dest).toMatchObject({ x: expect.closeTo(0, 0), y: expect.closeTo(-33.3, 0) });
   });
 
   it('shows the map without a route, and nothing without a position', () => {
@@ -102,7 +102,7 @@ describe('buildView minimap', () => {
     const v = buildView(input({ route: null, roads, fix: eastbound }));
     expect(v.minimap?.route).toEqual([]);
     expect(v.minimap?.roads).toHaveLength(1);
-    expect(v.minimap?.roads[0].points[0].y).toBeCloseTo(-25, 0); // crosses 50 m ahead
+    expect(v.minimap?.roads[0].points[0].y).toBeCloseTo(-16.7, 0); // crosses 50 m ahead
     expect(v.minimap?.cameras).toHaveLength(1);
     expect(v.minimap?.buildings).toHaveLength(1);
     expect(buildView(input({ fix: null })).minimap).toBeNull();
@@ -111,7 +111,7 @@ describe('buildView minimap', () => {
   it('marks the next turn', () => {
     const nav = { icon: 'left' as const, distToManeuver: 60, roadName: '', remainingDist: 100, remainingTime: 10 };
     const v = buildView(input({ route, nav, fix: eastbound }));
-    expect(v.minimap?.turn).toMatchObject({ x: expect.closeTo(0, 0), y: expect.closeTo(-30, 0) });
+    expect(v.minimap?.turn).toMatchObject({ x: expect.closeTo(0, 0), y: expect.closeTo(-20, 0) });
   });
 
   it('keeps the redraw key steady through sub-pixel jitter but not real movement', () => {
@@ -121,7 +121,7 @@ describe('buildView minimap', () => {
   });
 
   it('zooms out with speed', () => {
-    expect([30, 70, 110].map(minimapScale)).toEqual([2, 3, 5]);
+    expect([30, 70, 110].map(minimapScale)).toEqual([3, 4.5, 7]);
   });
 
   it('falls back to north-up and a plain marker without a heading', () => {

@@ -77,7 +77,7 @@ describe('map roads', () => {
 describe('buildings', () => {
   it('asks for outlines only, in a small radius', () => {
     expect(buildBuildingQuery({ lat: 37.5, lon: 127 })).toBe(
-      '[out:json][timeout:20];way(around:300,37.50000,127.00000)[building];out skel geom qt;',
+      '[out:json][timeout:20];way(around:400,37.50000,127.00000)[building];out skel geom qt;',
     );
   });
 

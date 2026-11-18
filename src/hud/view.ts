@@ -43,7 +43,7 @@ const VIEW = { left: -CAR.x - 4, right: MINIMAP.w - CAR.x + 4, top: -CAR.y - 4, 
 
 /** Metres per pixel: zoom out at speed so a turn shows up early enough to matter. */
 export function minimapScale(kmh: number): number {
-  return kmh < 50 ? 2 : kmh < 90 ? 3 : 5;
+  return kmh < 50 ? 3 : kmh < 90 ? 4.5 : 7;
 }
 
 /** Distance travelled to the point on the route closest to `fix` (same approach as RouteTracker). */
