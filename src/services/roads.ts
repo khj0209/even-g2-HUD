@@ -113,7 +113,9 @@ export class RoadDataService {
     if (this.center && distance(this.center, fix) < REFETCH_DIST) return;
     this.busy = true;
     const center = { lat: fix.lat, lon: fix.lon };
+    // Without a timeout a hung request would leave `busy` set forever and the limits would never refresh.
     this.fetchFn(OVERPASS_URL, {
+      signal: AbortSignal.timeout(15000),
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: 'data=' + encodeURIComponent(buildQuery(center)),

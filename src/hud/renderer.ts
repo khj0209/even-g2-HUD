@@ -18,6 +18,8 @@ export class HudRenderer {
   /** Last content key sent per container id. */
   private sent = new Map<number, string>();
   private lastView: HudView | null = null;
+  /** When each container was last sent, for `minInterval`. */
+  private sentAt = new Map<number, number>();
 
   addSink(sink: HudSink): void {
     this.sinks.push(sink);
@@ -38,6 +40,7 @@ export class HudRenderer {
   /** Forget what was sent and push everything again (e.g. after the glasses page was rebuilt). */
   redraw(): void {
     this.sent.clear();
+    this.sentAt.clear();
     if (this.lastView) this.render(this.lastView);
   }
 
@@ -46,7 +49,11 @@ export class HudRenderer {
     for (const box of this.boxes) {
       const [key, make] = this.content(box, view);
       if (this.sent.get(box.id) === key) continue;
+      // Throttled boxes catch up on a later render, since `sent` still holds the old key.
+      const now = Date.now();
+      if (box.minInterval && this.sent.has(box.id) && now - (this.sentAt.get(box.id) ?? 0) < box.minInterval) continue;
       this.sent.set(box.id, key);
+      this.sentAt.set(box.id, now);
       if (box.kind === 'text') for (const s of this.sinks) s.setText(box, key);
       else {
         const image = (make as () => HTMLCanvasElement)();

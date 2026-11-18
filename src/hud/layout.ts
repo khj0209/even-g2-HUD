@@ -12,6 +12,8 @@ export interface Box {
   h: number;
   /** Receives touchpad events. Exactly one per layout. */
   capture?: boolean;
+  /** Don't resend more often than this (ms). For images that change constantly but matter little. */
+  minInterval?: number;
 }
 
 // The G2 display floats slightly above the wearer's line of sight, so everything is packed into
@@ -36,7 +38,7 @@ const LAYOUTS: Record<DisplayMode, Box[]> = {
     // id 6 (not 7): reuses the id 'text' mode uses, since the two layouts are never active at once,
     // keeping ids 1–6 contiguous — some IDs skipped straight to a non-contiguous 7 and never rendered
     // on real hardware, which a contiguous, array-indexed container table on the device side would explain.
-    { id: 6, name: 'minimap', kind: 'image', x: SCREEN.w - 100 - 12, y: 12, w: 100, h: 100 },
+    { id: 6, name: 'minimap', kind: 'image', x: SCREEN.w - 100 - 12, y: 12, w: 100, h: 100, minInterval: 3000 },
   ],
   minimal: [
     EVENTS,

@@ -1,5 +1,5 @@
 import type { EvenAppBridge } from '@evenrealities/even_hub_sdk';
-import { DEFAULT_SETTINGS, DISPLAY_MODES, type Fix, type NavProgress, type Settings } from './core/types';
+import { DEFAULT_SETTINGS, DISPLAY_MODES, type Fix, type LatLon, type NavProgress, type Settings } from './core/types';
 import { GlassesSink } from './hud/glasses';
 import { HudRenderer, type HudSink } from './hud/renderer';
 import { buildView, LimitFilter, type HudView } from './hud/view';
@@ -25,6 +25,8 @@ export interface AppState {
   glasses: boolean;
   gps: boolean;
   destination: Place | null;
+  /** Last known position (even if stale), to bias destination search towards. */
+  position: LatLon | null;
   /** Human-readable navigation status / error for the phone page. */
   navMessage: string;
 }
@@ -187,6 +189,7 @@ export class App {
       glasses: !!this.glasses,
       gps: !!fix,
       destination: this.destination,
+      position: this.fix && { lat: this.fix.lat, lon: this.fix.lon },
       navMessage: this.navMessage,
     };
     for (const fn of this.listeners) fn(state);

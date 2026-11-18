@@ -1,6 +1,6 @@
 import { waitForEvenAppBridge } from '@evenrealities/even_hub_sdk';
 import { App, type AppState } from './app';
-import type { DisplayMode, Unit } from './core/types';
+import type { DisplayMode, LatLon, Unit } from './core/types';
 import { PreviewSink } from './hud/preview';
 import { searchPlaces, type Place } from './services/routing';
 
@@ -28,7 +28,7 @@ demo.onchange = () => app.updateSettings({ demo: demo.checked });
 tmapKey.onchange = () => app.updateSettings({ tmapApiKey: tmapKey.value.trim() });
 $('nav-stop').onclick = () => app.stopNavigation();
 
-let lastPosition: Place | null = null;
+let lastPosition: LatLon | null = null;
 let searchError = '';
 
 function showResults(places: Place[]): void {
@@ -65,6 +65,7 @@ $<HTMLFormElement>('search-form').onsubmit = async (e) => {
 };
 
 app.onState((s: AppState) => {
+  lastPosition = s.position ?? lastPosition;
   $('pill-glasses').classList.toggle('on', s.glasses);
   $('pill-gps').classList.toggle('on', s.gps);
   mode.value = s.settings.mode;

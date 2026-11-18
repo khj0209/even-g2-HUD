@@ -78,9 +78,12 @@ function routeWindow(route: Route, travelled: number, radius: number): LatLon[] 
 }
 
 /** Route points near the car, heading-up rotated and scaled to pixels. Null when not navigating. */
-function buildMinimap(route: Route | null, fix: Fix | null): MinimapView | null {
+function buildMinimap(route: Route | null, fix: Fix | null, nav: NavProgress | null): MinimapView | null {
   if (!route || !fix || route.points.length < 2) return null;
-  const windowPts = routeWindow(route, travelledAt(route, fix), MINIMAP_RADIUS_M);
+  // While guiding, reuse the tracker's position along the route: it searches near the last match,
+  // so a route that doubles back near itself can't make the minimap jump to the wrong stretch.
+  const travelled = nav ? route.distance - nav.remainingDist : travelledAt(route, fix);
+  const windowPts = routeWindow(route, travelled, MINIMAP_RADIUS_M);
   if (windowPts.length < 2) return null;
   const headingKnown = fix.heading != null;
   const h = ((fix.heading ?? 0) * Math.PI) / 180;
@@ -117,7 +120,7 @@ export function buildView(input: HudInput): HudView {
     nav: nav && { icon: nav.icon, dist: formatDistance(nav.distToManeuver, unit) },
     info,
     alert: cam ? `단속 ${formatDistance(cam.dist, unit)}` : '',
-    minimap: buildMinimap(route, fix),
+    minimap: buildMinimap(route, fix, nav),
   };
 }
 

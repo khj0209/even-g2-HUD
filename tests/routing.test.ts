@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { demoFix, demoRoadData, demoRoute } from '../src/services/demo';
 import { matchLimit } from '../src/services/roads';
-import { osrmToRoute, routeFromPolyline, RouteTracker, tmapToRoute } from '../src/services/routing';
+import { osrmToRoute, routeFromPolyline, RouteTracker, searchPlaces, tmapToRoute } from '../src/services/routing';
 
 // North 1.1 km, then east 0.9 km.
 const L = [
@@ -97,8 +97,40 @@ describe('tmapToRoute', () => {
     expect(route.steps).toEqual([]);
   });
 
+  it('guides through expressway junctions, exits and rotaries, but not tunnels', () => {
+    const turns = (turnType: number) =>
+      tmapToRoute({
+        features: [point(L[0], { turnType: 200 }), line([L[0], L[1]], { name: 'X' }), point(L[1], { turnType }), line([L[1], L[2]], { name: 'Y' })],
+      }).steps.map((s) => s.icon);
+    // Codes and meanings as seen in a real Tmap response: 117/118 "오른쪽/왼쪽 방향" at a JC,
+    // 103 "전방 고속도로 입구", 104 "오른쪽 고속도로 출구", 121 "터널".
+    expect(turns(117)).toEqual(['slight-right']);
+    expect(turns(118)).toEqual(['slight-left']);
+    expect(turns(103)).toEqual(['straight']);
+    expect(turns(104)).toEqual(['slight-right']);
+    expect(turns(135)).toEqual(['roundabout']);
+    expect(turns(121)).toEqual([]);
+  });
+
   it('throws when there is no route', () => {
     expect(() => tmapToRoute({ features: [] })).toThrow();
+  });
+});
+
+describe('searchPlaces (Tmap)', () => {
+  const respond = (status: number, body: string) => async () => new Response(status === 204 ? null : body, { status });
+
+  it('treats 204 No Content as no results', async () => {
+    expect(await searchPlaces('없는곳', null, 'key', respond(204, '') as typeof fetch)).toEqual([]);
+  });
+
+  it('reads POIs, preferring the entrance coordinates', async () => {
+    const body = JSON.stringify({
+      searchPoiInfo: { pois: { poi: [{ name: '강남역', frontLat: '37.49', frontLon: '127.02', noorLat: '37.5', noorLon: '127.03' }] } },
+    });
+    expect(await searchPlaces('강남역', null, 'key', respond(200, body) as typeof fetch)).toEqual([
+      { name: '강남역', lat: 37.49, lon: 127.02 },
+    ]);
   });
 });
 

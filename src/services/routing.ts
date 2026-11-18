@@ -182,8 +182,31 @@ const TMAP_TURN_ICON: Record<number, ManeuverIcon> = {
   17: 'slight-left',
   18: 'slight-right',
   19: 'sharp-right',
+  // Forks: "오른쪽/왼쪽". 117/118 are what Tmap uses at expressway junctions (JC), so dropping
+  // them would leave the HUD silent exactly where a missed exit costs the most.
+  43: 'slight-right',
+  44: 'slight-left',
+  117: 'slight-right',
+  118: 'slight-left',
+  // Expressway (101–106) and urban-expressway (111–116) entrances/exits: right, left, ahead.
+  101: 'slight-right',
+  102: 'slight-left',
+  103: 'straight',
+  104: 'slight-right',
+  105: 'slight-left',
+  106: 'straight',
+  111: 'slight-right',
+  112: 'slight-left',
+  113: 'straight',
+  114: 'slight-right',
+  115: 'slight-left',
+  116: 'straight',
+  // Rotary exits at 1 to 12 o'clock.
+  ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [131 + i, 'roundabout' as const])),
   201: 'arrive',
 };
+// Not mapped on purpose: 11 (straight on), 119–124 (underpass, overpass, tunnel, bridge…), 200 (start),
+// 185+ (waypoints, tollgates, rest areas). They are informational, not a manoeuvre to prepare for.
 
 /** Convert a Tmap `/tmap/routes` GeoJSON response into a Route. */
 export function tmapToRoute(json: any): Route {
@@ -254,7 +277,9 @@ export async function searchPlaces(
     }
     const res = await fetchTimed(fetchFn, `${TMAP_POI_URL}?${params}`, { headers: { appKey: apiKey, Accept: 'application/json' } });
     if (!res.ok) throw new Error(`검색 서버 오류 (HTTP ${res.status})`);
-    const json = await res.json();
+    // Tmap answers "no results" with 204 and an empty body, which res.json() would choke on.
+    const body = res.status === 204 ? '' : await res.text();
+    const json = body ? JSON.parse(body) : null;
     const pois: any[] = json?.searchPoiInfo?.pois?.poi ?? [];
     return pois.map((p) => ({
       name: p.name,

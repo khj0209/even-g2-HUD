@@ -14,6 +14,12 @@ import { pngBytes } from './draw';
 import type { Box } from './layout';
 import type { HudSink } from './renderer';
 
+const IMAGE_ORDER = ['speed', 'limit', 'turn', 'minimap'];
+const imagePriority = (box: Box) => {
+  const i = IMAGE_ORDER.indexOf(box.name);
+  return i < 0 ? IMAGE_ORDER.length : i;
+};
+
 export interface GlassesEvents {
   onClick(): void;
   onDoubleClick(): void;
@@ -26,7 +32,7 @@ export interface GlassesEvents {
  *
  * The link is slow (an image takes a noticeable fraction of a second) and must not be used
  * concurrently, so updates are queued latest-wins per container and sent one at a time,
- * text before images.
+ * text before images, and images in order of importance.
  */
 export class GlassesSink implements HudSink {
   private layout: Box[] | null = null;
@@ -88,7 +94,10 @@ export class GlassesSink implements HudSink {
             new TextContainerUpgrade({ containerID: box.id, containerName: box.name, content }),
           );
         } else if (this.images.size) {
-          const [id, { box, image }] = this.images.entries().next().value!;
+          // Most important image first, so the speed never waits behind the minimap.
+          const [id, { box, image }] = [...this.images].sort(
+            ([, a], [, b]) => imagePriority(a.box) - imagePriority(b.box),
+          )[0];
           this.images.delete(id);
           const result = await this.bridge.updateImageRawData(
             new ImageRawDataUpdate({ containerID: box.id, containerName: box.name, imageData: await pngBytes(image) }),
