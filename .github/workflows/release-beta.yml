@@ -43,7 +43,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/xdg/evenhub"
           printf '%s\n' "$EVENHUB_CREDENTIALS" > "$RUNNER_TEMP/xdg/evenhub/credentials.yaml"
           chmod 600 "$RUNNER_TEMP/xdg/evenhub/credentials.yaml"
-          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg" >> "$GITHUB_ENV"
+          # $GITHUB_ENV only applies to later steps, so export it for the check below too.
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/xdg"
+          echo "XDG_CONFIG_HOME=$XDG_CONFIG_HOME" >> "$GITHUB_ENV"
           npx evenhub self-check
 
       - name: Upload build
