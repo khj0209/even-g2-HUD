@@ -21,7 +21,6 @@ const imagePriority = (box: Box) => {
 };
 
 export interface GlassesEvents {
-  onClick(): void;
   onDoubleClick(): void;
   /** The glasses page came (back) to the foreground and needs repainting. */
   onResume(): void;
@@ -50,8 +49,7 @@ export class GlassesSink implements HudSink {
       if (!ev) return;
       // The host omits zero-valued fields, so a missing eventType means CLICK_EVENT (0).
       const type = ev.eventType ?? OsEventTypeList.CLICK_EVENT;
-      if (type === OsEventTypeList.CLICK_EVENT) events.onClick();
-      else if (type === OsEventTypeList.DOUBLE_CLICK_EVENT) events.onDoubleClick();
+      if (type === OsEventTypeList.DOUBLE_CLICK_EVENT) events.onDoubleClick();
       else if (type === OsEventTypeList.FOREGROUND_ENTER_EVENT) events.onResume();
     });
   }

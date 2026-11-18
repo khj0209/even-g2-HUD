@@ -1,4 +1,5 @@
-import type { ManeuverIcon, MinimapView } from '../core/types';
+import type { ManeuverIcon, MinimapPoint, MinimapView } from '../core/types';
+import { MINIMAP } from './layout';
 
 /** Bitmaps for the glasses: white on black, which the G2 shows as green on transparent. */
 
@@ -165,34 +166,84 @@ function arrow(ctx: CanvasRenderingContext2D, icon: ManeuverIcon): void {
   arrowHead(ctx, pts[pts.length - 2], pts[pts.length - 1]);
 }
 
-/** Top-right corner box: car-centred, heading-up route line. Null (or too short) draws just the bezel. */
+// Grey levels: the G2 shows brightness, so dim roads sit behind the bright route.
+const MINOR_ROAD = '#4a4a4a';
+const MAJOR_ROAD = '#8c8c8c';
+
+function polyline(ctx: CanvasRenderingContext2D, points: MinimapPoint[]): void {
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (const p of points.slice(1)) ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+}
+
+/** Top-right minimap: roads, the route, next turn, destination and cameras around the car. */
 export function drawMinimap(mm: MinimapView | null): HTMLCanvasElement {
-  const [c, ctx] = canvas(100, 100);
-  ctx.lineWidth = 3;
-  roundedRectPath(ctx, 2, 2, 96, 96, 14);
-  ctx.stroke();
-  if (!mm) return c;
-
+  const { w, h } = MINIMAP;
+  const [c, ctx] = canvas(w, h);
   ctx.save();
-  ctx.translate(50, 50);
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(mm.points[0].x, mm.points[0].y);
-  for (const p of mm.points.slice(1)) ctx.lineTo(p.x, p.y);
-  ctx.stroke();
+  roundedRectPath(ctx, 1, 1, w - 2, h - 2, 12);
+  ctx.clip();
 
-  // Car marker, centred: an arrow when heading-up (always points "up" by construction), else a plain dot.
-  ctx.beginPath();
-  if (mm.headingKnown) {
-    ctx.moveTo(0, -8);
-    ctx.lineTo(6, 7);
-    ctx.lineTo(-6, 7);
-    ctx.closePath();
-  } else {
-    ctx.arc(0, 0, 5, 0, Math.PI * 2);
+  if (mm) {
+    ctx.save();
+    ctx.translate(w / 2, 68);
+    for (const road of mm.roads) {
+      ctx.strokeStyle = road.major ? MAJOR_ROAD : MINOR_ROAD;
+      ctx.lineWidth = road.major ? 5 : 3;
+      polyline(ctx, road.points);
+    }
+    ctx.strokeStyle = ctx.fillStyle = '#fff';
+    if (mm.route.length >= 2) {
+      ctx.lineWidth = 6;
+      polyline(ctx, mm.route);
+    }
+    if (mm.turn) {
+      // Ring around the turn point, cut out of the route so it reads as a target.
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(mm.turn.x, mm.turn.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+    }
+    if (mm.dest) {
+      ctx.fillRect(mm.dest.x - 5, mm.dest.y - 5, 10, 10);
+    }
+    for (const cam of mm.cameras) {
+      // Camera: small diamond.
+      ctx.beginPath();
+      ctx.moveTo(cam.x, cam.y - 6);
+      ctx.lineTo(cam.x + 6, cam.y);
+      ctx.lineTo(cam.x, cam.y + 6);
+      ctx.lineTo(cam.x - 6, cam.y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Car: an arrow pointing up (heading-up) with a black outline so it stands out on the route.
+    ctx.beginPath();
+    if (mm.headingKnown) {
+      ctx.moveTo(0, -10);
+      ctx.lineTo(8, 8);
+      ctx.lineTo(0, 4);
+      ctx.lineTo(-8, 8);
+      ctx.closePath();
+    } else {
+      ctx.arc(0, 0, 6, 0, Math.PI * 2);
+    }
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+    ctx.fill();
+    ctx.restore();
   }
-  ctx.fill();
   ctx.restore();
+
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  roundedRectPath(ctx, 1, 1, w - 2, h - 2, 12);
+  ctx.stroke();
   return c;
 }
 

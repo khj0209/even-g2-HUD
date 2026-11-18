@@ -1,5 +1,5 @@
 import type { EvenAppBridge } from '@evenrealities/even_hub_sdk';
-import { DEFAULT_SETTINGS, DISPLAY_MODES, type Fix, type LatLon, type NavProgress, type Settings } from './core/types';
+import { DEFAULT_SETTINGS, type Fix, type LatLon, type NavProgress, type Settings } from './core/types';
 import { GlassesSink } from './hud/glasses';
 import { HudRenderer, type HudSink } from './hud/renderer';
 import { buildView, LimitFilter, type HudView } from './hud/view';
@@ -57,7 +57,7 @@ export class App {
   }
 
   start(): void {
-    this.renderer.setMode(this.settings.mode);
+    this.renderer.start();
     this.restartLocation();
     setInterval(() => this.tick(), 1000);
     this.tick();
@@ -68,14 +68,9 @@ export class App {
     this.bridge = bridge;
     this.loadSettings(await bridge.getLocalStorage(SETTINGS_KEY).catch(() => ''));
     this.glasses = new GlassesSink(bridge, {
-      onClick: () => {
-        const i = DISPLAY_MODES.indexOf(this.settings.mode);
-        this.updateSettings({ mode: DISPLAY_MODES[(i + 1) % DISPLAY_MODES.length] });
-      },
       onDoubleClick: () => this.glasses?.exit(),
       onResume: () => this.renderer.redraw(),
     });
-    this.renderer.setMode(this.settings.mode);
     this.renderer.addSink(this.glasses);
     this.restartLocation();
     this.tick();
@@ -91,7 +86,6 @@ export class App {
     const json = JSON.stringify(this.settings);
     localStorage.setItem(SETTINGS_KEY, json);
     void this.bridge?.setLocalStorage(SETTINGS_KEY, json);
-    this.renderer.setMode(this.settings.mode);
     if (demoChanged) this.restartLocation();
     this.tick();
   }
@@ -181,7 +175,7 @@ export class App {
       camera = cameraAhead(this.roads.data, fix);
       nav = this.trackRoute(fix);
     }
-    const view = buildView({ fix, limit, camera, nav, route: this.tracker?.route ?? null, settings: this.settings, now });
+    const view = buildView({ fix, limit, camera, nav, route: this.tracker?.route ?? null, roads: this.roads.data, settings: this.settings, now });
     this.renderer.render(view);
     const state: AppState = {
       view,

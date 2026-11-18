@@ -1,7 +1,6 @@
-import type { DisplayMode } from '../core/types';
 import { drawLimit, drawMinimap, drawSpeed, drawTurn } from './draw';
-import { layoutFor, type Box } from './layout';
-import { textModeLines, type HudView } from './view';
+import { LAYOUT, type Box } from './layout';
+import type { HudView } from './view';
 
 /** Somewhere the HUD can be shown: the glasses, or the on-phone preview. */
 export interface HudSink {
@@ -14,7 +13,7 @@ export interface HudSink {
 export class HudRenderer {
   private sinks: HudSink[] = [];
   private boxes: Box[] = [];
-  private mode: DisplayMode | null = null;
+  private started = false;
   /** Last content key sent per container id. */
   private sent = new Map<number, string>();
   private lastView: HudView | null = null;
@@ -23,16 +22,17 @@ export class HudRenderer {
 
   addSink(sink: HudSink): void {
     this.sinks.push(sink);
-    if (this.mode) {
+    if (this.started) {
       sink.setLayout(this.boxes);
       this.redraw();
     }
   }
 
-  setMode(mode: DisplayMode): void {
-    if (mode === this.mode) return;
-    this.mode = mode;
-    this.boxes = layoutFor(mode);
+  /** Lay out the HUD on every sink. Called once; there is a single fixed layout. */
+  start(): void {
+    if (this.started) return;
+    this.started = true;
+    this.boxes = LAYOUT;
     for (const s of this.sinks) s.setLayout(this.boxes);
     this.redraw();
   }
@@ -73,15 +73,27 @@ export class HudRenderer {
         return [v.nav ? `${v.nav.icon}|${v.nav.dist}` : '', () => drawTurn(v.nav)];
       case 'minimap': {
         // Round points so small GPS jitter doesn't repaint the image every tick.
-        const key = v.minimap ? v.minimap.points.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(';') : '';
+        const key = v.minimap ? minimapKey(v.minimap) : '';
         return [key, () => drawMinimap(v.minimap)];
       }
       case 'info':
         return [v.info];
-      case 'text':
-        return [textModeLines(v)];
       default:
         return [' '];
     }
   }
+}
+
+const pts = (points: { x: number; y: number }[]) => points.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(' ');
+
+function minimapKey(m: NonNullable<HudView['minimap']>): string {
+  return [
+    m.scale,
+    m.headingKnown,
+    pts(m.route),
+    m.roads.map((r) => (r.major ? 'M' : 'm') + pts(r.points)).join('|'),
+    m.turn && pts([m.turn]),
+    m.dest && pts([m.dest]),
+    pts(m.cameras),
+  ].join('/');
 }

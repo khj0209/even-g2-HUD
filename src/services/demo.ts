@@ -27,9 +27,22 @@ const LEGS = [
 
 export const demoRoute = (): Route => routeFromPolyline(PATH, NAMES, 13);
 
+/** A made-up street grid around the drive so the minimap has something to show. */
+function demoStreets(): RoadData['map'] {
+  const streets: RoadData['map'] = [];
+  // Side streets roughly every 130 m, like a dense city block grid.
+  for (let lat = 37.4955; lat < 37.507; lat += 0.0012)
+    streets.push({ major: false, points: [{ lat, lon: 127.022 }, { lat, lon: 127.044 }] });
+  for (let lon = 127.0235; lon < 127.044; lon += 0.0015)
+    streets.push({ major: false, points: [{ lat: 37.494, lon }, { lat: 37.508, lon }] });
+  for (let i = 0; i + 1 < PATH.length; i++) streets.push({ major: true, points: [PATH[i], PATH[i + 1]] });
+  return streets;
+}
+
 export const demoRoadData = (): RoadData => ({
   ways: LEGS.map((leg, i) => ({ maxspeed: leg.limit, points: [PATH[i], PATH[i + 1]] })),
   cameras: [{ ...interpolate(PATH[1], PATH[2], 0.7), maxspeed: 60 }],
+  map: demoStreets(),
 });
 
 /** Position on the demo drive `elapsed` seconds in. Stops at the end. */

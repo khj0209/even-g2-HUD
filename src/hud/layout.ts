@@ -1,5 +1,3 @@
-import type { DisplayMode } from '../core/types';
-
 export const SCREEN = { w: 576, h: 288 };
 
 export interface Box {
@@ -27,25 +25,24 @@ const EVENTS: Box = { id: 1, name: 'evt', kind: 'text', x: 0, y: 0, w: SCREEN.w,
 
 const BAND_Y = 160;
 
-const LAYOUTS: Record<DisplayMode, Box[]> = {
-  full: [
-    EVENTS,
-    { id: 2, name: 'info', kind: 'text', x: 68, y: 120, w: 440, h: 40 },
-    { id: 3, name: 'turn', kind: 'image', x: 68, y: BAND_Y, w: 120, h: 100 },
-    { id: 4, name: 'speed', kind: 'image', x: 188, y: BAND_Y, w: 200, h: 100 },
-    { id: 5, name: 'limit', kind: 'image', x: 388, y: BAND_Y, w: 120, h: 100 },
-    // Fourth and last image container the glasses allow; sits above `info`, clear of the main cluster.
-    // id 6 (not 7): reuses the id 'text' mode uses, since the two layouts are never active at once,
-    // keeping ids 1–6 contiguous — some IDs skipped straight to a non-contiguous 7 and never rendered
-    // on real hardware, which a contiguous, array-indexed container table on the device side would explain.
-    { id: 6, name: 'minimap', kind: 'image', x: SCREEN.w - 100 - 12, y: 12, w: 100, h: 100, minInterval: 3000 },
-  ],
-  minimal: [
-    EVENTS,
-    { id: 4, name: 'speed', kind: 'image', x: 128, y: BAND_Y, w: 200, h: 100 },
-    { id: 5, name: 'limit', kind: 'image', x: 328, y: BAND_Y, w: 120, h: 100 },
-  ],
-  text: [{ id: 6, name: 'text', kind: 'text', x: 128, y: 150, w: 320, h: 110, capture: true }],
-};
+export const MINIMAP = { w: 160, h: 100 };
 
-export const layoutFor = (mode: DisplayMode): Box[] => LAYOUTS[mode];
+export const LAYOUT: Box[] = [
+  EVENTS,
+  { id: 2, name: 'info', kind: 'text', x: 68, y: 120, w: 440, h: 40 },
+  { id: 3, name: 'turn', kind: 'image', x: 68, y: BAND_Y, w: 120, h: 100 },
+  { id: 4, name: 'speed', kind: 'image', x: 188, y: BAND_Y, w: 200, h: 100 },
+  { id: 5, name: 'limit', kind: 'image', x: 388, y: BAND_Y, w: 120, h: 100 },
+  // Fourth and last image container the glasses allow; sits above `info`, clear of the main cluster.
+  // Ids are kept contiguous (1–6): a non-contiguous id 7 once failed to render on real hardware.
+  {
+    id: 6,
+    name: 'minimap',
+    kind: 'image',
+    x: SCREEN.w - MINIMAP.w - 12,
+    y: 12,
+    w: MINIMAP.w,
+    h: MINIMAP.h,
+    minInterval: 3000,
+  },
+];

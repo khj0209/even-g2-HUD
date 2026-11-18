@@ -1,7 +1,9 @@
-import { compass, localOffset, projectOnSegment } from '../core/geo';
+import { compass, interpolate, localOffset, projectOnSegment } from '../core/geo';
 import { displayLimit, displaySpeed, formatClock, formatDistance, KMH_PER_MPS, unitLabel } from '../core/format';
-import type { CameraAlert, Fix, LatLon, ManeuverIcon, MinimapView, NavProgress, Settings } from '../core/types';
+import type { CameraAlert, Fix, LatLon, ManeuverIcon, MinimapPoint, MinimapView, NavProgress, Settings } from '../core/types';
+import type { RoadData } from '../services/roads';
 import type { Route } from '../services/routing';
+import { MINIMAP } from './layout';
 
 export interface HudInput {
   /** Latest fix, or null when GPS is missing/stale. */
@@ -12,6 +14,8 @@ export interface HudInput {
   nav: NavProgress | null;
   /** Active route, for the minimap. Null when not navigating. */
   route: Route | null;
+  /** Map data around the car, for the minimap. */
+  roads?: RoadData;
   settings: Settings;
   now: Date;
 }
@@ -28,27 +32,19 @@ export interface HudView {
   info: string;
   /** Short camera warning, e.g. "단속 300 m", or empty. */
   alert: string;
-  /** Null when there's no route to show (not navigating). */
+  /** Null without a position. */
   minimap: MinimapView | null;
 }
 
-const ICON_TEXT: Record<ManeuverIcon, string> = {
-  straight: '직진',
-  'slight-left': '왼쪽 방향',
-  left: '좌회전',
-  'sharp-left': '급좌회전',
-  'slight-right': '오른쪽 방향',
-  right: '우회전',
-  'sharp-right': '급우회전',
-  uturn: '유턴',
-  roundabout: '회전교차로',
-  arrive: '도착',
-};
+/** Where the car sits in the minimap: centred, low, so most of the view is ahead. */
+const CAR = { x: MINIMAP.w / 2, y: 68 };
+/** The view in car-relative pixels, with a small margin so lines run off the edge cleanly. */
+const VIEW = { left: -CAR.x - 4, right: MINIMAP.w - CAR.x + 4, top: -CAR.y - 4, bottom: MINIMAP.h - CAR.y + 4 };
 
-/** Metres from the car to the edge of the minimap box. */
-const MINIMAP_RADIUS_M = 150;
-/** Half the minimap image, in pixels, leaving a margin inside its 100×100 box. */
-const MINIMAP_PX = 42;
+/** Metres per pixel: zoom out at speed so a turn shows up early enough to matter. */
+export function minimapScale(kmh: number): number {
+  return kmh < 50 ? 2 : kmh < 90 ? 3 : 5;
+}
 
 /** Distance travelled to the point on the route closest to `fix` (same approach as RouteTracker). */
 function travelledAt(route: Route, fix: Fix): number {
@@ -77,28 +73,92 @@ function routeWindow(route: Route, travelled: number, radius: number): LatLon[] 
   return points.slice(start, end + 1);
 }
 
-/** Route points near the car, heading-up rotated and scaled to pixels. Null when not navigating. */
-function buildMinimap(route: Route | null, fix: Fix | null, nav: NavProgress | null): MinimapView | null {
-  if (!route || !fix || route.points.length < 2) return null;
-  // While guiding, reuse the tracker's position along the route: it searches near the last match,
-  // so a route that doubles back near itself can't make the minimap jump to the wrong stretch.
-  const travelled = nav ? route.distance - nav.remainingDist : travelledAt(route, fix);
-  const windowPts = routeWindow(route, travelled, MINIMAP_RADIUS_M);
-  if (windowPts.length < 2) return null;
+const inView = (p: MinimapPoint) => p.x >= VIEW.left && p.x <= VIEW.right && p.y >= VIEW.top && p.y <= VIEW.bottom;
+
+/** Whether segment a–b could cross the view (bounding-box test; the canvas clips the rest). */
+function segmentNearView(a: MinimapPoint, b: MinimapPoint): boolean {
+  return (
+    Math.max(a.x, b.x) >= VIEW.left &&
+    Math.min(a.x, b.x) <= VIEW.right &&
+    Math.max(a.y, b.y) >= VIEW.top &&
+    Math.min(a.y, b.y) <= VIEW.bottom
+  );
+}
+
+/** Split a projected polyline into the runs that pass through the view. */
+function clip(points: MinimapPoint[]): MinimapPoint[][] {
+  const runs: MinimapPoint[][] = [];
+  let run: MinimapPoint[] = [];
+  for (let i = 0; i + 1 < points.length; i++) {
+    if (segmentNearView(points[i], points[i + 1])) {
+      if (!run.length) run.push(points[i]);
+      run.push(points[i + 1]);
+    } else if (run.length) {
+      runs.push(run);
+      run = [];
+    }
+  }
+  if (run.length) runs.push(run);
+  return runs;
+}
+
+/** Point `at` metres along the route. */
+function pointAlong(route: Route, at: number): LatLon {
+  const { points, cum } = route;
+  let i = 0;
+  while (i + 2 < points.length && cum[i + 1] < at) i++;
+  const len = cum[i + 1] - cum[i];
+  return interpolate(points[i], points[i + 1], len > 0 ? Math.min(1, Math.max(0, (at - cum[i]) / len)) : 0);
+}
+
+/**
+ * Car-centred, heading-up map: surrounding roads, the route ahead, the next turn, the destination
+ * and speed cameras. Null without a position.
+ */
+function buildMinimap(input: HudInput): MinimapView | null {
+  const { fix, route, nav, roads } = input;
+  if (!fix) return null;
   const headingKnown = fix.heading != null;
   const h = ((fix.heading ?? 0) * Math.PI) / 180;
   const cosH = Math.cos(h);
   const sinH = Math.sin(h);
-  const scale = MINIMAP_PX / MINIMAP_RADIUS_M;
-  const points = windowPts.map((p) => {
+  const scale = minimapScale((fix.speed ?? 0) * KMH_PER_MPS);
+  const project = (p: LatLon): MinimapPoint => {
     const { east, north } = localOffset(fix, p);
-    return { x: (east * cosH - north * sinH) * scale, y: -(east * sinH + north * cosH) * scale };
-  });
-  return { points, headingKnown };
+    return { x: (east * cosH - north * sinH) / scale, y: -(east * sinH + north * cosH) / scale };
+  };
+  // Far enough to reach every corner of the view.
+  const radius = Math.hypot(Math.max(CAR.x, MINIMAP.w - CAR.x), Math.max(CAR.y, MINIMAP.h - CAR.y)) * scale + 20;
+
+  const view: MinimapView = { scale, roads: [], route: [], turn: null, dest: null, cameras: [], headingKnown };
+
+  for (const way of roads?.map ?? [])
+    for (const points of clip(way.points.map(project))) view.roads.push({ major: way.major, points });
+  // Major roads last so they draw over the minor ones they cross.
+  view.roads.sort((a, b) => Number(a.major) - Number(b.major));
+
+  for (const cam of roads?.cameras ?? []) {
+    const p = project(cam);
+    if (inView(p)) view.cameras.push(p);
+  }
+
+  if (route && route.points.length >= 2) {
+    // While guiding, reuse the tracker's position along the route: it searches near the last match,
+    // so a route that doubles back near itself can't make the minimap jump to the wrong stretch.
+    const travelled = nav ? route.distance - nav.remainingDist : travelledAt(route, fix);
+    view.route = routeWindow(route, travelled, radius).map(project);
+    if (nav) {
+      const turn = project(pointAlong(route, travelled + nav.distToManeuver));
+      if (inView(turn)) view.turn = turn;
+    }
+    const dest = project(route.points[route.points.length - 1]);
+    if (inView(dest)) view.dest = dest;
+  }
+  return view;
 }
 
 export function buildView(input: HudInput): HudView {
-  const { fix, camera, nav, route, settings, now } = input;
+  const { fix, camera, nav, settings, now } = input;
   const { unit } = settings;
   const kmh = fix?.speed != null ? fix.speed * KMH_PER_MPS : null;
   const cam = settings.cameraAlerts ? camera : null;
@@ -120,19 +180,8 @@ export function buildView(input: HudInput): HudView {
     nav: nav && { icon: nav.icon, dist: formatDistance(nav.distToManeuver, unit) },
     info,
     alert: cam ? `단속 ${formatDistance(cam.dist, unit)}` : '',
-    minimap: buildMinimap(route, fix, nav),
+    minimap: buildMinimap(input),
   };
-}
-
-/** The whole HUD as text, for text-only mode (no image transfers, so it updates fastest). */
-export function textModeLines(view: HudView): string {
-  let first = `${view.speed} ${view.unit}`;
-  if (view.limit != null) first += `   제한 ${view.limit}${view.over ? ' !' : ''}`;
-  if (view.alert) first += `   ${view.alert}`;
-  const lines = [first];
-  if (view.nav) lines.push(`${ICON_TEXT[view.nav.icon]} ${view.nav.dist}`);
-  lines.push(view.info);
-  return lines.join('\n');
 }
 
 /** Holds the shown limit steady through GPS jitter and short gaps in map data. */

@@ -1,6 +1,6 @@
 import { waitForEvenAppBridge } from '@evenrealities/even_hub_sdk';
 import { App, type AppState } from './app';
-import type { DisplayMode, LatLon, Unit } from './core/types';
+import type { LatLon, Unit } from './core/types';
 import { PreviewSink } from './hud/preview';
 import { searchPlaces, type Place } from './services/routing';
 
@@ -10,7 +10,6 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const forceDemo = new URLSearchParams(location.search).has('demo');
 const app = new App(new PreviewSink($<HTMLCanvasElement>('preview')), forceDemo);
 
-const mode = $<HTMLSelectElement>('set-mode');
 const unit = $<HTMLSelectElement>('set-unit');
 const tolerance = $<HTMLSelectElement>('set-tolerance');
 const camera = $<HTMLInputElement>('set-camera');
@@ -20,7 +19,6 @@ const results = $<HTMLUListElement>('results');
 const searchInput = $<HTMLInputElement>('search-input');
 const searchMessage = $('nav-message');
 
-mode.onchange = () => app.updateSettings({ mode: mode.value as DisplayMode });
 unit.onchange = () => app.updateSettings({ unit: unit.value as Unit });
 tolerance.onchange = () => app.updateSettings({ overspeedTolerance: Number(tolerance.value) });
 camera.onchange = () => app.updateSettings({ cameraAlerts: camera.checked });
@@ -68,7 +66,6 @@ app.onState((s: AppState) => {
   lastPosition = s.position ?? lastPosition;
   $('pill-glasses').classList.toggle('on', s.glasses);
   $('pill-gps').classList.toggle('on', s.gps);
-  mode.value = s.settings.mode;
   unit.value = s.settings.unit;
   tolerance.value = String(s.settings.overspeedTolerance);
   camera.checked = s.settings.cameraAlerts;

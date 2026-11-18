@@ -32,6 +32,7 @@ describe('overpass', () => {
     });
     expect(data.ways).toHaveLength(1);
     expect(data.ways[0].maxspeed).toBe(50);
+    expect(data.map).toEqual([]); // no highway tags on these test ways
     expect(data.cameras).toEqual([
       { lat: 5, lon: 6, maxspeed: 60 },
       { lat: 7, lon: 8, maxspeed: null },
@@ -46,7 +47,29 @@ const data: RoadData = {
     { maxspeed: 30, points: [{ lat: 37.49, lon: 127.0 }, { lat: 37.51, lon: 127.0 }] },
   ],
   cameras: [{ lat: 37.5, lon: 127.004, maxspeed: 50 }],
+  map: [],
 };
+
+describe('map roads', () => {
+  it('keeps drivable roads for the minimap, marking the major ones', () => {
+    const geometry = [{ lat: 1, lon: 2 }, { lat: 1, lon: 3 }];
+    const data = parseOverpass({
+      elements: [
+        { type: 'way', tags: { highway: 'primary' }, geometry },
+        { type: 'way', tags: { highway: 'residential', maxspeed: '30' }, geometry },
+        { type: 'way', tags: { highway: 'motorway_link' }, geometry },
+        { type: 'way', tags: { highway: 'footway' }, geometry },
+        { type: 'way', tags: { highway: 'service' }, geometry },
+      ],
+    });
+    expect(data.map.map((w) => w.major)).toEqual([true, false, true]);
+    expect(data.ways).toHaveLength(1);
+  });
+
+  it('asks Overpass for drivable roads too', () => {
+    expect(buildQuery({ lat: 37.5, lon: 127 })).toContain('[highway~"^(motorway|trunk|primary');
+  });
+});
 
 describe('matchLimit', () => {
   it('uses heading to pick the right road at a junction', () => {

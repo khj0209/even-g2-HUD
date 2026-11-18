@@ -11,10 +11,22 @@ export interface Camera extends LatLon {
   maxspeed: number | null;
 }
 
+/** Any drivable road, for drawing the minimap. */
+export interface MapWay {
+  major: boolean;
+  points: LatLon[];
+}
+
 export interface RoadData {
+  /** Roads with a tagged limit, for speed-limit matching. */
   ways: RoadWay[];
   cameras: Camera[];
+  /** All drivable roads around the car, for the minimap. */
+  map: MapWay[];
 }
+
+const DRIVABLE = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)(_link)?$/;
+const MAJOR = /^(motorway|trunk|primary|secondary)(_link)?$/;
 
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const WAY_RADIUS = 700;
@@ -36,17 +48,21 @@ export function buildQuery(c: LatLon): string {
   return (
     `[out:json][timeout:10];(` +
     `way(around:${WAY_RADIUS},${at})[highway][maxspeed];` +
+    `way(around:${WAY_RADIUS},${at})[highway~"${DRIVABLE.source}"];` +
     `node(around:${CAMERA_RADIUS},${at})[highway=speed_camera];` +
     `);out body geom;`
   );
 }
 
 export function parseOverpass(json: any): RoadData {
-  const data: RoadData = { ways: [], cameras: [] };
+  const data: RoadData = { ways: [], cameras: [], map: [] };
   for (const el of json?.elements ?? []) {
     if (el.type === 'way' && Array.isArray(el.geometry)) {
+      const points: LatLon[] = el.geometry.map((g: any) => ({ lat: g.lat, lon: g.lon }));
       const maxspeed = parseMaxspeed(el.tags?.maxspeed);
-      if (maxspeed) data.ways.push({ maxspeed, points: el.geometry.map((g: any) => ({ lat: g.lat, lon: g.lon })) });
+      if (maxspeed) data.ways.push({ maxspeed, points });
+      const highway = String(el.tags?.highway ?? '');
+      if (DRIVABLE.test(highway)) data.map.push({ major: MAJOR.test(highway), points });
     } else if (el.type === 'node') {
       data.cameras.push({ lat: el.lat, lon: el.lon, maxspeed: parseMaxspeed(el.tags?.maxspeed) });
     }
@@ -100,7 +116,7 @@ export function cameraAhead(data: RoadData, fix: Fix): CameraAlert | null {
 
 /** Keeps road data for the area around the car, refetching from Overpass as it moves. */
 export class RoadDataService {
-  data: RoadData = { ways: [], cameras: [] };
+  data: RoadData = { ways: [], cameras: [], map: [] };
   private center: LatLon | null = null;
   private busy = false;
   private retryAt = 0;

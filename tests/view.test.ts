@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, type Fix } from '../src/core/types';
-import { buildView, LimitFilter, textModeLines, type HudInput } from '../src/hud/view';
+import { buildView, LimitFilter, minimapScale, type HudInput } from '../src/hud/view';
 import { FixNormalizer } from '../src/services/location';
 
 const now = new Date(2026, 0, 1, 14, 5);
@@ -48,7 +48,6 @@ describe('buildView', () => {
     expect(v.nav).toEqual({ icon: 'left', dist: '350 m' });
     expect(v.info).toBe('테헤란로  12 km · 14:32 도착');
     expect(v.alert).toBe('단속 300 m');
-    expect(textModeLines(v)).toBe('63 km/h   제한 60 !   단속 300 m\n좌회전 350 m\n테헤란로  12 km · 14:32 도착');
   });
 
   it('falls back to the camera limit on roads with no tagged limit', () => {
@@ -64,17 +63,43 @@ describe('buildView', () => {
 
 describe('buildView minimap', () => {
   const route = { points: [{ lat: 37.5, lon: 127 }, { lat: 37.5, lon: 127.0011327 }], cum: [0, 100], steps: [], distance: 100, duration: 10 };
+  const eastbound = { lat: 37.5, lon: 127, speed: 10, heading: 90, ts: now.getTime() };
 
   it('rotates heading-up: a point dead ahead (east, facing east) ends up straight up on screen', () => {
-    const v = buildView(input({ route, fix: { lat: 37.5, lon: 127, speed: 10, heading: 90, ts: now.getTime() } }));
+    const v = buildView(input({ route, fix: eastbound }));
     expect(v.minimap?.headingKnown).toBe(true);
-    expect(v.minimap?.points[0]).toMatchObject({ x: expect.closeTo(0, 5), y: expect.closeTo(0, 5) });
-    expect(v.minimap?.points[1].x).toBeCloseTo(0, 0);
-    expect(v.minimap?.points[1].y).toBeLessThan(-20); // negative y = up = ahead
+    expect(v.minimap?.route[0]).toMatchObject({ x: expect.closeTo(0, 5), y: expect.closeTo(0, 5) });
+    expect(v.minimap?.route[1].x).toBeCloseTo(0, 0);
+    expect(v.minimap?.route[1].y).toBeCloseTo(-50, 0); // 100 m at 2 m/px; negative y = ahead
+    expect(v.minimap?.dest).toMatchObject({ x: expect.closeTo(0, 0), y: expect.closeTo(-50, 0) });
   });
 
-  it('is null when not navigating', () => {
-    expect(buildView(input({ route: null })).minimap).toBeNull();
+  it('shows the map without a route, and nothing without a position', () => {
+    const roads = {
+      ways: [],
+      cameras: [{ lat: 37.5, lon: 127.0005, maxspeed: 50 }],
+      map: [
+        // North–south street crossing 50 m ahead, and one 5 km away that must be clipped out.
+        { major: false, points: [{ lat: 37.499, lon: 127.000566 }, { lat: 37.501, lon: 127.000566 }] },
+        { major: true, points: [{ lat: 37.55, lon: 127 }, { lat: 37.56, lon: 127 }] },
+      ],
+    };
+    const v = buildView(input({ route: null, roads, fix: eastbound }));
+    expect(v.minimap?.route).toEqual([]);
+    expect(v.minimap?.roads).toHaveLength(1);
+    expect(v.minimap?.roads[0].points[0].y).toBeCloseTo(-25, 0); // crosses 50 m ahead
+    expect(v.minimap?.cameras).toHaveLength(1);
+    expect(buildView(input({ fix: null })).minimap).toBeNull();
+  });
+
+  it('marks the next turn', () => {
+    const nav = { icon: 'left' as const, distToManeuver: 60, roadName: '', remainingDist: 100, remainingTime: 10 };
+    const v = buildView(input({ route, nav, fix: eastbound }));
+    expect(v.minimap?.turn).toMatchObject({ x: expect.closeTo(0, 0), y: expect.closeTo(-30, 0) });
+  });
+
+  it('zooms out with speed', () => {
+    expect([30, 70, 110].map(minimapScale)).toEqual([2, 3, 5]);
   });
 
   it('falls back to north-up and a plain marker without a heading', () => {
@@ -86,7 +111,7 @@ describe('buildView minimap', () => {
     // A single 1000 m leg (like the demo drive's legs); car sits at its midpoint, 500 m from either end.
     const longLeg = { points: [{ lat: 37.5, lon: 127 }, { lat: 37.509, lon: 127 }], cum: [0, 1001], steps: [], distance: 1001, duration: 60 };
     const v = buildView(input({ route: longLeg, fix: { lat: 37.5045, lon: 127, speed: 10, heading: 0, ts: now.getTime() } }));
-    expect(v.minimap?.points.length).toBeGreaterThanOrEqual(2);
+    expect(v.minimap?.route.length).toBeGreaterThanOrEqual(2);
   });
 });
 

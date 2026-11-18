@@ -13,13 +13,8 @@ export interface Fix extends LatLon {
 
 export type Unit = 'kmh' | 'mph';
 
-/** full: everything · minimal: speed + limit only · text: no images (fastest refresh) */
-export type DisplayMode = 'full' | 'minimal' | 'text';
-export const DISPLAY_MODES: DisplayMode[] = ['full', 'minimal', 'text'];
-
 export interface Settings {
   unit: Unit;
-  mode: DisplayMode;
   /** km/h over the limit before the overspeed warning shows. */
   overspeedTolerance: number;
   cameraAlerts: boolean;
@@ -30,7 +25,6 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   unit: 'kmh',
-  mode: 'full',
   overspeedTolerance: 0,
   cameraAlerts: true,
   demo: false,
@@ -66,15 +60,25 @@ export interface CameraAlert {
   limit: number | null;
 }
 
-/** A point already projected to pixels relative to the car (heading-up rotated, if known). */
+/** A point in minimap pixels relative to the car (x right, y down), heading-up rotated if known. */
 export interface MinimapPoint {
   x: number;
   y: number;
 }
 
 export interface MinimapView {
-  /** Route points near the car, ahead and behind. */
-  points: MinimapPoint[];
+  /** Metres per pixel; zooms out with speed. */
+  scale: number;
+  /** Surrounding roads, clipped to the view. Major roads are drawn heavier. */
+  roads: { major: boolean; points: MinimapPoint[] }[];
+  /** Active route near the car (empty when not navigating). */
+  route: MinimapPoint[];
+  /** Next manoeuvre point, if it is in view. */
+  turn: MinimapPoint | null;
+  /** Destination, if it is in view. */
+  dest: MinimapPoint | null;
+  /** Speed cameras in view. */
+  cameras: MinimapPoint[];
   /** Whether rotation is heading-up (true) or plain north-up because heading is unknown (false). */
   headingKnown: boolean;
 }
