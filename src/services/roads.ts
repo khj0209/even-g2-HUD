@@ -120,6 +120,28 @@ export function cameraAhead(data: RoadData, fix: Fix): CameraAlert | null {
   return best;
 }
 
+/**
+ * Keeps a camera warning on until the camera is actually passed. A fresh lookup each second would
+ * make it blink whenever the heading wobbles out of the narrow "straight ahead" cone.
+ */
+export class CameraTracker {
+  private cam: Camera | null = null;
+
+  next(data: RoadData, fix: Fix): CameraAlert | null {
+    if (this.cam) {
+      const dist = distance(fix, this.cam);
+      const off = fix.heading == null ? 0 : Math.abs(angleDiff(fix.heading, bearing(fix, this.cam)));
+      // Passed (now behind us), turned away, or out of range: let it go.
+      if (dist < 15 || off > 100 || dist > CAMERA_ALERT_DIST + 150) this.cam = null;
+      else return { dist, limit: this.cam.maxspeed };
+    }
+    const found = cameraAhead(data, fix);
+    if (!found) return null;
+    this.cam = data.cameras.find((c) => Math.abs(distance(fix, c) - found.dist) < 0.5) ?? null;
+    return found;
+  }
+}
+
 /** Turns the various ways a request can fail into a short message for the phone page. */
 function describe(e: unknown): string {
   if (e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')) return '시간 초과';

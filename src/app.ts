@@ -14,12 +14,16 @@ import {
 import { deadReckon, DR_START_MS, MapMatcher, type PathRef } from './services/matching';
 import { RoadDataService } from './services/mapcache';
 import { TmapLimitService } from './services/tmaplimit';
-import { cameraAhead, matchLimit, type RoadData } from './services/roads';
+import { CameraTracker, matchLimit, type RoadData } from './services/roads';
 import { fetchRoute, RouteTracker, type Place } from './services/routing';
 
 const SETTINGS_KEY = 'drivehud.settings';
 /** A fix older than this is treated as "no GPS". */
 const STALE_MS = 5000;
+/** With GPS gone and nothing to extrapolate (stopped, or no heading), keep the last place this long. */
+const HOLD_MS = 60000;
+/** Keep showing the last turn instruction this long through a gap in guidance. */
+const NAV_HOLD_MS = 15000;
 const REROUTE_INTERVAL_MS = 10000;
 
 export interface AppState {
@@ -44,6 +48,8 @@ export class App {
   private source: LocationSource | null = null;
   private normalizer = new FixNormalizer();
   private matcher = new MapMatcher();
+  private cameras = new CameraTracker();
+  private lastNav: { nav: NavProgress; at: number } | null = null;
   private tmapLimits = new TmapLimitService();
   /** Where the last real fix was matched on the map, for dead reckoning through tunnels. */
   private lastRef: PathRef | null = null;
@@ -158,6 +164,8 @@ export class App {
     this.normalizer = new FixNormalizer();
     this.matcher = new MapMatcher();
     this.lastRef = null;
+    this.cameras = new CameraTracker();
+    this.lastNav = null;
     this.limitFilter = new LimitFilter();
     this.roads = new RoadDataService();
     this.tracker = null;
@@ -211,7 +219,13 @@ export class App {
     if (!this.fix) return null;
     const age = now - this.fix.ts;
     if (age < DR_START_MS) return this.fix;
-    return deadReckon(this.fix, this.lastRef, age, now) ?? (age < STALE_MS ? this.fix : null);
+    const dr = deadReckon(this.fix, this.lastRef, age, now);
+    if (dr) return dr;
+    if (age < STALE_MS) return this.fix;
+    // Stopped (at lights, in a car park) or nothing to follow: a car that isn't moving hasn't gone
+    // anywhere, so keep the last place rather than blanking the HUD.
+    if (age < HOLD_MS) return { ...this.fix, estimated: true };
+    return null;
   }
 
   private tick(): void {
@@ -226,9 +240,13 @@ export class App {
       // navigation uses and far more complete.
       const tmap = this.settings.demo ? null : this.tmapLimits.limitAt(fix);
       limit = this.limitFilter.next(tmap ?? matchLimit(this.roads.data, fix));
-      camera = cameraAhead(this.roads.data, fix);
+      camera = this.cameras.next(this.roads.data, fix);
       nav = this.trackRoute(fix);
-    }
+    } else limit = this.limitFilter.current;
+    // Ride out short gaps in guidance (a stray fix off the route, GPS dropping out).
+    const t = now.getTime();
+    if (nav) this.lastNav = { nav, at: t };
+    else if (this.tracker && this.lastNav && t - this.lastNav.at < NAV_HOLD_MS) nav = this.lastNav.nav;
     const view = buildView({ fix, limit, camera, nav, route: this.tracker?.route ?? null, roads: this.roads.data, settings: this.settings, now });
     this.renderer.render(view);
     const state: AppState = {

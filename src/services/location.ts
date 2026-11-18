@@ -1,6 +1,6 @@
 import { AppLocationAccuracy, type EvenAppBridge } from '@evenrealities/even_hub_sdk';
-import { bearing, distance } from '../core/geo';
-import type { Fix } from '../core/types';
+import { bearing, destination, distance } from '../core/geo';
+import type { Fix, LatLon } from '../core/types';
 import { demoFix, inDemoTunnel } from './demo';
 
 export interface LocationSource {
@@ -10,8 +10,14 @@ export interface LocationSource {
 
 const valid = (n: number | null | undefined): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 
-/** Fixes worse than this (metres, 1σ) are skipped: in tunnels and urban canyons they jump around. */
-const MAX_ACCURACY = 50;
+/**
+ * Only fixes worse than this (metres, 1σ) are skipped outright. Poorer fixes below it are still
+ * used, but weighted down by the position filter, so the HUD keeps going in urban canyons instead
+ * of losing GPS whenever accuracy dips.
+ */
+const MAX_ACCURACY = 150;
+/** A filtered position this far from a new fix is abandoned for the fix (a real jump, not noise). */
+const FILTER_RESET_DIST = 150;
 /** A jump implying more than this (m/s, ~250 km/h) is a glitch, not driving. */
 const MAX_PLAUSIBLE_SPEED = 70;
 /** After this many rejected jumps in a row, accept the new place (e.g. leaving a long tunnel). */
@@ -33,6 +39,8 @@ const HYSTERESIS_KMH = 0.7;
  */
 export class FixNormalizer {
   private history: Fix[] = [];
+  /** Filtered position and when it was last updated. */
+  private pos: (LatLon & { ts: number }) | null = null;
   private heading: number | null = null;
   private smoothed: number | null = null;
   private shownKmh: number | null = null;
@@ -58,7 +66,8 @@ export class FixNormalizer {
     if (base && base !== raw) {
       const d = distance(base, raw);
       if (speed == null) speed = d / ((raw.ts - base.ts) / 1000);
-      if (heading == null && d > 3) heading = bearing(base, raw);
+      // With a poor fix, a short move is mostly noise: demand more movement before trusting a course.
+      if (heading == null && d > 3 + (raw.accuracy ?? 0) / 2) heading = bearing(base, raw);
     }
     this.history = [...this.history.filter((f) => raw.ts - f.ts <= DERIVE_WINDOW_MS), raw];
 
@@ -67,7 +76,27 @@ export class FixNormalizer {
     if (speed != null && speed < 1.5) heading = null;
     if (speed != null) speed = this.smooth(speed, raw.ts - (prev?.ts ?? raw.ts), platformSpeed != null);
     if (heading != null) this.heading = heading;
-    return { ...raw, speed, heading: this.heading };
+    return { ...raw, ...this.filterPosition(raw, speed), speed, heading: this.heading };
+  }
+
+  /**
+   * Blend each fix with where the car should be by now (last position moved on at the current
+   * speed and heading), trusting the fix more the better its accuracy. Scatter of tens of metres
+   * between buildings then shows as a small wobble instead of jumps.
+   */
+  private filterPosition(raw: Fix, speed: number | null): LatLon {
+    const prev = this.pos;
+    let pred: LatLon | null = prev;
+    if (prev && speed != null && speed > 1 && this.heading != null)
+      pred = destination(prev, this.heading, speed * ((raw.ts - prev.ts) / 1000));
+    let out: LatLon = { lat: raw.lat, lon: raw.lon };
+    if (pred && distance(pred, raw) < FILTER_RESET_DIST) {
+      // ~0.75 for a 4 m fix, ~0.2 at 50 m, 0.15 at worst.
+      const k = Math.min(0.9, Math.max(0.15, 12 / (12 + (raw.accuracy ?? 8))));
+      out = { lat: pred.lat + k * (raw.lat - pred.lat), lon: pred.lon + k * (raw.lon - pred.lon) };
+    }
+    this.pos = { ...out, ts: raw.ts };
+    return out;
   }
 
   /**

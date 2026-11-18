@@ -297,6 +297,11 @@ export function buildView(input: HudInput): HudView {
 
 /** Holds the shown limit steady through GPS jitter and short gaps in map data. */
 export class LimitFilter {
+  /** The limit on show, for when there's no position to look one up for. */
+  get current(): number | null {
+    return this.shown;
+  }
+
   private shown: number | null = null;
   private candidate: number | null = null;
   private count = 0;
@@ -310,8 +315,9 @@ export class LimitFilter {
       this.candidate = raw;
       this.count = 0;
     }
-    // A new limit must repeat twice; losing the limit entirely takes longer.
-    if (++this.count >= (raw == null ? 5 : 2)) {
+    // A new limit must repeat twice; losing the limit entirely takes much longer, so a fix that
+    // lands off the road for a moment doesn't blank the sign.
+    if (++this.count >= (raw == null ? 10 : 2)) {
       this.shown = raw;
       this.count = 0;
     }

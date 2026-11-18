@@ -187,13 +187,14 @@ describe('buildView overview', () => {
 });
 
 describe('LimitFilter', () => {
-  it('needs two matching readings to change and five to clear', () => {
+  it('needs two matching readings to change and ten to clear', () => {
     const f = new LimitFilter();
     expect(f.next(50)).toBeNull();
     expect(f.next(50)).toBe(50);
     expect(f.next(30)).toBe(50); // one stray reading at a junction
     expect(f.next(50)).toBe(50);
-    expect([null, null, null, null].map((v) => f.next(v))).toEqual([50, 50, 50, 50]);
+    expect(Array.from({ length: 9 }, () => f.next(null))).toEqual(Array(9).fill(50));
+    expect(f.current).toBe(50);
     expect(f.next(null)).toBeNull();
   });
 });
@@ -221,7 +222,7 @@ describe('FixNormalizer', () => {
 
   it('skips inaccurate fixes, duplicates and out-of-order fixes', () => {
     const n = new FixNormalizer();
-    expect(n.next(at(37.5, 0, { accuracy: 120 }))).toBeNull();
+    expect(n.next(at(37.5, 0, { accuracy: 200 }))).toBeNull();
     expect(n.next(at(37.5, 0, { accuracy: 8 }))).not.toBeNull();
     expect(n.next(at(37.5, 0))).toBeNull();
     expect(n.next(at(37.5, -500))).toBeNull();
@@ -258,6 +259,26 @@ describe('FixNormalizer', () => {
     expect(step(2000, 59.7)).toBeCloseTo(first, 5);
     expect(step(3000, 2)).toBeLessThan(40); // big change goes through
     expect(step(10000, 1)).toBe(0);
+  });
+
+  it('keeps poor fixes but damps their scatter', () => {
+    const n = new FixNormalizer();
+    // Driving north at 10 m/s with a good fix, then a 40 m-accuracy fix that is 40 m off to the east.
+    n.next(at(37.5, 0, { speed: 10, heading: 0, accuracy: 5 }));
+    n.next(at(37.5 + 10 * M, 1000, { speed: 10, heading: 0, accuracy: 5 }));
+    const off = n.next({ ...at(37.5 + 20 * M, 2000, { speed: 10, heading: 0, accuracy: 40 }), lon: 127 + 40 * M * 1.26 })!;
+    expect(off).not.toBeNull();
+    const eastShift = (off.lon - 127) / (M * 1.26);
+    expect(eastShift).toBeGreaterThan(2);
+    expect(eastShift).toBeLessThan(15); // pulled most of the way back towards the road
+    expect(off.lat).toBeCloseTo(37.5 + 20 * M, 4); // and it still moved on
+  });
+
+  it('follows a real jump instead of averaging it away', () => {
+    const n = new FixNormalizer();
+    n.next(at(37.5, 0, { speed: 10, heading: 0 }));
+    const jumped = n.next(at(37.5 + 400 * M, 10000, { speed: 10, heading: 0 }))!;
+    expect(jumped.lat).toBeCloseTo(37.5 + 400 * M, 6);
   });
 
   it('accepts timestamps in seconds', () => {

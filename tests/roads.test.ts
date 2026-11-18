@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Fix } from '../src/core/types';
-import { OverpassClient, parseBuildings, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
+import { CameraTracker, OverpassClient, parseBuildings, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
 
 const fix = (lat: number, lon: number, heading: number | null): Fix => ({ lat, lon, heading, speed: 15, ts: 0 });
 
@@ -101,6 +101,19 @@ describe('cameraAhead', () => {
     expect(cameraAhead(data, fix(37.5, 127.001, 270))).toBeNull();
     expect(cameraAhead(data, fix(37.5, 127.001, null))).toBeNull();
     expect(cameraAhead(data, fix(37.5, 126.99, 90))).toBeNull(); // too far
+  });
+});
+
+describe('CameraTracker', () => {
+  it('keeps warning through heading wobble until the camera is passed', () => {
+    const t = new CameraTracker();
+    expect(t.next(data, fix(37.5, 127.001, 90))?.dist).toBeGreaterThan(250);
+    // Heading swings 40° off (outside the 25° cone a fresh lookup needs): still warning.
+    const wobble = t.next(data, fix(37.5, 127.002, 130));
+    expect(wobble?.limit).toBe(50);
+    expect(wobble!.dist).toBeLessThan(200);
+    // Driven past it: gone.
+    expect(t.next(data, fix(37.5, 127.0045, 90))).toBeNull();
   });
 });
 
