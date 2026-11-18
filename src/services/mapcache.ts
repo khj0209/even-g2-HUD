@@ -6,6 +6,7 @@ import {
   OVERPASS_ENDPOINTS,
   OverpassClient,
   parseBuildings,
+  OverpassError,
   parseOverpass,
   type Building,
   type Camera,
@@ -21,8 +22,13 @@ import {
 export const TILE_LAT = 0.01;
 export const TILE_LON = 0.0125;
 
-export type Layer = 'limits' | 'roads' | 'buildings';
-const LAYERS: Layer[] = ['limits', 'roads', 'buildings'];
+/**
+ * Two downloads per tile: roads (speed limits, cameras and every drivable road, in one request) and
+ * buildings, the biggest, which are only needed at city speeds. Fewer, larger requests go down
+ * better with the public servers than many small ones.
+ */
+export type Layer = 'roads' | 'buildings';
+const LAYERS: Layer[] = ['roads', 'buildings'];
 
 export interface Tile {
   /** Row (latitude) index. */
@@ -32,7 +38,7 @@ export interface Tile {
 }
 
 export const tileOf = (p: LatLon): Tile => ({ x: Math.floor(p.lat / TILE_LAT), y: Math.floor(p.lon / TILE_LON) });
-const tileKey = (layer: Layer, t: Tile) => `${layer}:${t.x}:${t.y}`;
+const tileKey = (layer: Layer, t: Tile) => `v2:${layer}:${t.x}:${t.y}`;
 
 /** The tile and its neighbours: every point within ~1.1 km of `p` is in one of them. */
 export function tilesAround(p: LatLon, ring = 1): Tile[] {
@@ -51,10 +57,11 @@ function bbox(t: Tile): string {
 export function tileQuery(layer: Layer, t: Tile): string {
   const b = bbox(t);
   switch (layer) {
-    case 'limits':
-      return `[out:json][timeout:25];(way(${b})[highway][maxspeed];node(${b})[highway=speed_camera];);out body geom;`;
     case 'roads':
-      return `[out:json][timeout:25];way(${b})[highway~"${DRIVABLE.source}"];out body geom qt;`;
+      return (
+        `[out:json][timeout:25];(way(${b})[highway~"${DRIVABLE.source}"];way(${b})[highway][maxspeed];` +
+        `node(${b})[highway=speed_camera];);out body geom qt;`
+      );
     case 'buildings':
       // Outlines only (`skel`: no tags), to keep the download small in dense areas.
       return `[out:json][timeout:25];way(${b})[building];out skel geom qt;`;
@@ -71,7 +78,7 @@ export interface TileData {
 function parseLayer(layer: Layer, json: any): TileData {
   if (layer === 'buildings') return { buildings: parseBuildings(json) };
   const d = parseOverpass(json);
-  return layer === 'limits' ? { ways: d.ways, cameras: d.cameras } : { map: d.map };
+  return { ways: d.ways, cameras: d.cameras, map: d.map };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -200,6 +207,9 @@ class TileCache {
   private busy = new Set<string>();
   private failures = new Map<string, { n: number; retryAt: number }>();
   private running = false;
+  /** Whole queue paused while the servers are refusing for load; doubles on each refusal. */
+  pausedUntil = 0;
+  private pauses = 0;
   error = '';
   stored = 0;
   prefetch = { total: 0, done: 0 };
@@ -261,12 +271,18 @@ class TileCache {
     this.running = true;
     try {
       for (let job = this.queue.shift(); job; job = this.queue.shift()) {
+        const wait = this.pausedUntil - Date.now();
+        if (wait > 0) {
+          this.onChange();
+          await new Promise((r) => setTimeout(r, wait));
+        }
         this.busy.add(job.key);
         try {
           const data = parseLayer(job.layer, await this.client.run(tileQuery(job.layer, job.tile)));
           if (job.prio === 0) this.mem.set(job.key, data);
           this.failures.delete(job.key);
           this.error = '';
+          this.pauses = 0;
           await this.store.put(job.key, { savedAt: Date.now(), data }).catch((e) => console.warn('[mapcache] store', e));
           void this.refreshCount();
         } catch (e) {
@@ -274,6 +290,10 @@ class TileCache {
           // Back off while the servers are struggling: 10 s, 20 s, 40 s … up to 2 minutes.
           this.failures.set(job.key, { n, retryAt: Date.now() + Math.min(120000, 10000 * 2 ** (n - 1)) });
           this.error = e instanceof Error ? e.message : String(e);
+          // Every server is refusing for load: stop asking for a while (15 s, 30 s, 60 s … 5 min)
+          // instead of firing the rest of the queue at them, which only makes it worse.
+          if (e instanceof OverpassError && e.busy)
+            this.pausedUntil = Date.now() + Math.min(300000, 15000 * 2 ** this.pauses++);
         } finally {
           this.busy.delete(job.key);
         }
@@ -366,8 +386,13 @@ export class RoadDataService {
   private around: Tile[] = [];
   private wantBuildings = true;
 
-  constructor(fetchFn: typeof fetch = (...a) => fetch(...a), endpoints = OVERPASS_ENDPOINTS, store: TileStore = openTileStore()) {
-    this.cache = new TileCache(store, new OverpassClient(fetchFn, endpoints), () => this.rebuild());
+  constructor(
+    fetchFn: typeof fetch = (...a) => fetch(...a),
+    endpoints = OVERPASS_ENDPOINTS,
+    store: TileStore = openTileStore(),
+    minGapMs = 1000,
+  ) {
+    this.cache = new TileCache(store, new OverpassClient(fetchFn, endpoints, minGapMs), () => this.rebuild());
   }
 
   /** Call on every fix; cheap unless the car has moved into a new tile. */
@@ -382,7 +407,6 @@ export class RoadDataService {
       this.cache.keepOnly(keep);
       this.rebuild();
     }
-    this.cache.want('limits', this.around, 0);
     this.cache.want('roads', this.around, 0);
     if (this.wantBuildings) this.cache.want('buildings', this.around, 0);
   }
@@ -393,11 +417,13 @@ export class RoadDataService {
     for (const layer of LAYERS) this.cache.want(layer, tiles, 1);
   }
 
-  /** Download everything within `radius` metres of `p`. */
+  /**
+   * Download roads within `radius` metres of `p`, and buildings (the heavy part) within the nearer
+   * ~1.5 km only.
+   */
   prefetchArea(p: LatLon, radius: number): void {
-    const ring = Math.ceil(radius / 1100);
-    const tiles = tilesAround(p, ring);
-    for (const layer of LAYERS) this.cache.want(layer, tiles, 1);
+    this.cache.want('roads', tilesAround(p, Math.ceil(radius / 1100)), 1);
+    this.cache.want('buildings', tilesAround(p, 1), 1);
   }
 
   clearStored(): Promise<void> {
@@ -418,13 +444,15 @@ export class RoadDataService {
     const part = (label: string, l: Layer, n: number) =>
       !this.center ? `${label} 대기` : loaded(l) ? `${label} ${n}` : n ? `${label} ${n}+` : `${label} 받는 중`;
     const parts = [
-      part('제한속도', 'limits', this.data.ways.length),
+      part('제한속도', 'roads', this.data.ways.length),
       part('도로', 'roads', this.data.map.length),
       this.wantBuildings || this.data.buildings.length ? part('건물', 'buildings', this.data.buildings.length) : '건물 고속 주행 중 생략',
     ];
     const { total, done } = this.cache.prefetch;
     if (total) parts.push(`미리 받기 ${done}/${total}`);
     parts.push(`저장된 구역 ${this.cache.stored}`);
+    const paused = Math.ceil((this.cache.pausedUntil - Date.now()) / 1000);
+    if (paused > 0) parts.push(`서버 혼잡, ${paused}초 후 다시 시도`);
     if (this.cache.error) parts.push(`오류: ${this.cache.error}`);
     return parts.join(' · ');
   }

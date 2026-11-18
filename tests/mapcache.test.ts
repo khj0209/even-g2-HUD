@@ -28,9 +28,10 @@ function fakeOverpass(status = 200) {
     // Same ids from every tile, like a way crossing tile borders.
     const elements = q.includes('[building]')
       ? [{ type: 'way', id: 3, geometry: g }]
-      : q.includes('highway~')
-        ? [{ type: 'way', id: 2, tags: { highway: 'primary' }, geometry: g }]
-        : [{ type: 'way', id: 1, tags: { highway: 'primary', maxspeed: '50' }, geometry: g }];
+      : [
+          { type: 'way', id: 1, tags: { highway: 'primary', maxspeed: '50' }, geometry: g },
+          { type: 'way', id: 2, tags: { highway: 'residential' }, geometry: g },
+        ];
     return new Response(JSON.stringify({ elements }));
   }) as typeof fetch;
   return { fetchFn, queries };
@@ -40,9 +41,11 @@ describe('tiles', () => {
   it('maps positions to ~1.1 km tiles and asks for a tile by its box', () => {
     const t = tileOf({ lat: 37.5355, lon: 126.6431 });
     expect(t).toEqual({ x: 3753, y: 10131 });
-    expect(tileQuery('limits', t)).toBe(
-      '[out:json][timeout:25];(way(37.5300,126.6375,37.5400,126.6500)[highway][maxspeed];node(37.5300,126.6375,37.5400,126.6500)[highway=speed_camera];);out body geom;',
-    );
+    const b = '37.5300,126.6375,37.5400,126.6500';
+    const roads = tileQuery('roads', t);
+    expect(roads).toContain(`way(${b})[highway~"^(motorway`);
+    expect(roads).toContain(`way(${b})[highway][maxspeed]`);
+    expect(roads).toContain(`node(${b})[highway=speed_camera]`);
     expect(tileQuery('buildings', t)).toContain('way(37.5300,126.6375,37.5400,126.6500)[building];out skel geom qt;');
     expect(tilesAround({ lat: 37.5355, lon: 126.6431 })).toHaveLength(9);
     expect(tilesAround({ lat: 37.5355, lon: 126.6431 }, 3)).toHaveLength(49);
@@ -69,56 +72,57 @@ describe('tiles', () => {
 });
 
 describe('RoadDataService', () => {
-  it('downloads the 3×3 tiles around the car for every layer, limits first', async () => {
+  it('downloads the 3×3 tiles around the car, roads before buildings', async () => {
     const { fetchFn, queries } = fakeOverpass();
-    const svc = new RoadDataService(fetchFn, ['a'], new MemoryTileStore());
+    const svc = new RoadDataService(fetchFn, ['a'], new MemoryTileStore(), 0);
     svc.update(fix());
     expect(svc.statusText()).toContain('제한속도 받는 중');
     await settle();
-    expect(queries).toHaveLength(27);
-    expect(queries[0]).toContain('[maxspeed]');
+    expect(queries).toHaveLength(18);
+    expect(queries.slice(0, 9).every((q) => q.includes('[maxspeed]'))).toBe(true);
     expect(svc.data.ways).toHaveLength(1); // deduplicated across the 9 tiles
-    expect(svc.statusText()).toBe('제한속도 1 · 도로 1 · 건물 1 · 저장된 구역 27');
+    expect(svc.data.map).toHaveLength(2);
+    expect(svc.statusText()).toBe('제한속도 1 · 도로 2 · 건물 1 · 저장된 구역 18');
   });
 
   it('reuses stored tiles instead of downloading again', async () => {
     const store = new MemoryTileStore();
     const first = fakeOverpass();
-    const a = new RoadDataService(first.fetchFn, ['a'], store);
+    const a = new RoadDataService(first.fetchFn, ['a'], store, 0);
     a.update(fix());
     await settle();
     const second = fakeOverpass();
-    const b = new RoadDataService(second.fetchFn, ['a'], store);
+    const b = new RoadDataService(second.fetchFn, ['a'], store, 0);
     b.update(fix());
     await settle();
     expect(second.queries).toHaveLength(0);
-    expect(b.data.map).toHaveLength(1);
+    expect(b.data.map).toHaveLength(2);
   });
 
   it('skips buildings at speed', async () => {
     const { fetchFn, queries } = fakeOverpass();
-    const svc = new RoadDataService(fetchFn, ['a'], new MemoryTileStore());
+    const svc = new RoadDataService(fetchFn, ['a'], new MemoryTileStore(), 0);
     svc.update(fix(37.5355, 126.6431, 90));
     await settle();
     expect(queries.some((q) => q.includes('[building]'))).toBe(false);
     expect(svc.statusText()).toContain('건물 고속 주행 중 생략');
   });
 
-  it('prefetches an area into storage and reports progress', async () => {
+  it('prefetches an area into storage (buildings only nearby) and reports progress', async () => {
     const store = new MemoryTileStore();
     const { fetchFn, queries } = fakeOverpass();
-    const svc = new RoadDataService(fetchFn, ['a'], store);
-    svc.prefetchArea({ lat: 37.5355, lon: 126.6431 }, 1000);
-    expect(svc.statusText()).toContain('미리 받기 0/27');
+    const svc = new RoadDataService(fetchFn, ['a'], store, 0);
+    svc.prefetchArea({ lat: 37.5355, lon: 126.6431 }, 3000);
+    expect(svc.statusText()).toContain('미리 받기 0/58'); // 49 road tiles + 9 building tiles
     await settle();
-    expect(queries).toHaveLength(27);
-    expect(await store.count()).toBe(27);
+    expect(queries).toHaveLength(58);
+    expect(await store.count()).toBe(58);
     expect(svc.statusText()).not.toContain('미리 받기');
   });
 
   it('serves the car before prefetching', async () => {
     const { fetchFn, queries } = fakeOverpass();
-    const svc = new RoadDataService(fetchFn, ['a'], new MemoryTileStore());
+    const svc = new RoadDataService(fetchFn, ['a'], new MemoryTileStore(), 0);
     svc.prefetchArea({ lat: 37.6, lon: 126.7 }, 3000);
     svc.update(fix());
     await settle();
@@ -129,11 +133,13 @@ describe('RoadDataService', () => {
 
   it('shows the error and keeps going when downloads fail', async () => {
     const { fetchFn } = fakeOverpass(502);
-    const svc = new RoadDataService(fetchFn, ['a'], new MemoryTileStore());
+    const svc = new RoadDataService(fetchFn, ['a'], new MemoryTileStore(), 0);
     svc.update(fix());
     await settle();
-    expect(svc.statusText()).toContain('오류: HTTP 502');
+    expect(svc.statusText()).toContain('오류: a 502');
     expect(svc.statusText()).toContain('제한속도 받는 중');
+    // Refused for load: the queue pauses instead of firing the remaining tiles at the server.
+    expect(svc.statusText()).toMatch(/서버 혼잡, \d+초 후 다시 시도/);
   });
 
   it('works without storage that keeps anything', async () => {
@@ -144,7 +150,7 @@ describe('RoadDataService', () => {
       clear: () => Promise.reject(new Error('no db')),
     };
     const { fetchFn } = fakeOverpass();
-    const svc = new RoadDataService(fetchFn, ['a'], broken);
+    const svc = new RoadDataService(fetchFn, ['a'], broken, 0);
     svc.update(fix());
     await settle();
     expect(svc.data.ways).toHaveLength(1);

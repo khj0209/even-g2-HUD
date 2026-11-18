@@ -131,7 +131,28 @@ export function cameraAhead(data: RoadData, fix: Fix): CameraAlert | null {
 /** Turns the various ways a request can fail into a short message for the phone page. */
 function describe(e: unknown): string {
   if (e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')) return '시간 초과';
-  return e instanceof Error ? e.message : String(e);
+  if (e instanceof TypeError) return '연결 실패'; // fetch's network error (offline, blocked, DNS)
+  const m = e instanceof Error ? e.message : String(e);
+  return m.replace(/^HTTP /, '');
+}
+
+/** "overpass-api.de" from the endpoint URL, for short error messages. */
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^(www|maps)\./, '');
+  } catch {
+    return url;
+  }
+};
+
+/** Every server failed. `busy` when they were refusing for load (429/502/503/504), not e.g. offline. */
+export class OverpassError extends Error {
+  constructor(
+    message: string,
+    readonly busy: boolean,
+  ) {
+    super(message);
+  }
 }
 
 /**
@@ -141,10 +162,13 @@ function describe(e: unknown): string {
 export class OverpassClient {
   private chain: Promise<unknown> = Promise.resolve();
   private preferred = 0;
+  private lastStart = 0;
 
+  /** `minGapMs`: least time between two requests, so a long queue doesn't hammer the servers. */
   constructor(
     private fetchFn: typeof fetch,
     private endpoints = OVERPASS_ENDPOINTS,
+    private minGapMs = 1000,
   ) {}
 
   run(query: string): Promise<any> {
@@ -154,9 +178,13 @@ export class OverpassClient {
   }
 
   private async tryAll(query: string): Promise<any> {
-    let lastError: unknown = null;
+    const errors: string[] = [];
+    let busy = 0;
     for (let k = 0; k < this.endpoints.length; k++) {
       const i = (this.preferred + k) % this.endpoints.length;
+      const wait = this.lastStart + this.minGapMs - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      this.lastStart = Date.now();
       try {
         const r = await this.fetchFn(this.endpoints[i], {
           // Without a timeout a hung request would block every request queued behind it.
@@ -165,7 +193,10 @@ export class OverpassClient {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: 'data=' + encodeURIComponent(query),
         });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) {
+          if ([429, 502, 503, 504].includes(r.status)) busy++;
+          throw new Error(`HTTP ${r.status}`);
+        }
         const json = await r.json();
         // Overpass reports a query that ran out of time or memory as 200 with a "remark".
         if (!Array.isArray(json?.elements) || (json.remark && !json.elements.length))
@@ -173,11 +204,12 @@ export class OverpassClient {
         this.preferred = i;
         return json;
       } catch (e) {
-        lastError = e;
+        errors.push(`${hostOf(this.endpoints[i])} ${describe(e)}`);
         console.warn('[overpass]', this.endpoints[i], e);
       }
     }
-    throw new Error(describe(lastError));
+    // Name every server's failure: "overpass-api.de 504, private.coffee 연결 실패, …".
+    throw new OverpassError(errors.join(', '), busy > 0);
   }
 }
 

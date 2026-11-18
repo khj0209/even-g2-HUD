@@ -111,7 +111,7 @@ describe('OverpassClient', () => {
       calls.push(url);
       return url === 'a' ? new Response('', { status: 502 }) : new Response(JSON.stringify({ elements: [] }));
     }) as typeof fetch;
-    const client = new OverpassClient(fetchFn, ['a', 'b']);
+    const client = new OverpassClient(fetchFn, ['a', 'b'], 0);
     expect(await client.run('q')).toEqual({ elements: [] });
     await client.run('q');
     expect(calls).toEqual(['a', 'b', 'b']);
@@ -126,14 +126,33 @@ describe('OverpassClient', () => {
       running--;
       return new Response(JSON.stringify({ elements: [] }));
     }) as typeof fetch;
-    const client = new OverpassClient(fetchFn, ['a']);
+    const client = new OverpassClient(fetchFn, ['a'], 0);
     await Promise.all([client.run('1'), client.run('2'), client.run('3')]);
     expect(maxRunning).toBe(1);
+  });
+
+  it('names every server in the error, and flags load refusals', async () => {
+    const fetchFn = (async (url: string) =>
+      url.includes('one') ? new Response('', { status: 504 }) : Promise.reject(new TypeError('Failed to fetch'))) as typeof fetch;
+    const err = await new OverpassClient(fetchFn, ['https://one.example/api', 'https://maps.two.example/api'], 0).run('q').catch((e) => e);
+    expect(err.message).toBe('one.example 504, two.example 연결 실패');
+    expect(err.busy).toBe(true);
+  });
+
+  it('spaces requests out', async () => {
+    const starts: number[] = [];
+    const fetchFn = (async () => {
+      starts.push(Date.now());
+      return new Response(JSON.stringify({ elements: [] }));
+    }) as typeof fetch;
+    const client = new OverpassClient(fetchFn, ['a'], 50);
+    await Promise.all([client.run('1'), client.run('2'), client.run('3')]);
+    expect(starts[2] - starts[0]).toBeGreaterThanOrEqual(95);
   });
 
   it('treats a timed-out query reported as 200 with a remark as a failure', async () => {
     const fetchFn = (async () =>
       new Response(JSON.stringify({ elements: [], remark: 'runtime error: Query timed out' }))) as typeof fetch;
-    await expect(new OverpassClient(fetchFn, ['a']).run('q')).rejects.toThrow('서버 처리 시간 초과');
+    await expect(new OverpassClient(fetchFn, ['a'], 0).run('q')).rejects.toThrow('서버 처리 시간 초과');
   });
 });
