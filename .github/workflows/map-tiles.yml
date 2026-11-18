@@ -65,3 +65,16 @@ jobs:
     steps:
       - id: deploy
         uses: actions/deploy-pages@v4
+
+      # Check the live site: the index, and the tile for 청라 (Incheon), counted.
+      - name: Check the published tiles
+        run: |
+          base='${{ steps.deploy.outputs.page_url }}'
+          curl -fsS "${base}index.json"; echo
+          curl -fsS "${base}v1/3753/10131.json" -o tile.json
+          node -e '
+            const t = require("./tile.json");
+            const drivable = t.w.filter((w) => w[0] & 1).length;
+            const limits = t.w.filter((w) => w[1] > 0).map((w) => w[1]);
+            console.log(`청라 tile: ${t.w.length} ways, ${drivable} drivable, ${limits.length} with limits [${[...new Set(limits)].sort((a, b) => a - b)}], ${t.c.length} cameras, ${require("fs").statSync("tile.json").size} bytes`);
+          '
