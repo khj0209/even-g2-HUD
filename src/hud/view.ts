@@ -206,6 +206,8 @@ export function buildView(input: HudInput): HudView {
     const eta = formatClock(new Date(now.getTime() + nav.remainingTime * 1000));
     info = [nav.roadName, `${formatDistance(nav.remainingDist, unit)} · ${eta} 도착`].filter(Boolean).join('  ');
   } else info = [formatClock(now), fix.heading != null ? compass(fix.heading) : ''].filter(Boolean).join('  ');
+  // Say so when the position is extrapolated (GPS lost in a tunnel), so it isn't taken as measured.
+  if (fix?.estimated) info = `GPS 추정 · ${info}`;
 
   return {
     speed: fix?.speed != null ? String(displaySpeed(fix.speed, unit)) : '--',

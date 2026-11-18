@@ -25,6 +25,10 @@ const LEGS = [
   { limit: 50, speed: 58 },
 ];
 
+/** A stretch of the first leg where the demo "loses GPS", to show dead reckoning through a tunnel. */
+const TUNNEL = { from: 37.5003, to: 37.5025, lon: 127.0276 };
+export const inDemoTunnel = (p: LatLon) => Math.abs(p.lon - TUNNEL.lon) < 1e-6 && p.lat > TUNNEL.from && p.lat < TUNNEL.to;
+
 export const demoRoute = (): Route => routeFromPolyline(PATH, NAMES, 13);
 
 /** A made-up street grid around the drive so the minimap has something to show. */

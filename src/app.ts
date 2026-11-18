@@ -11,7 +11,8 @@ import {
   FixNormalizer,
   type LocationSource,
 } from './services/location';
-import { cameraAhead, matchLimit, RoadDataService } from './services/roads';
+import { deadReckon, DR_START_MS, MapMatcher, type PathRef } from './services/matching';
+import { cameraAhead, matchLimit, RoadDataService, type RoadData } from './services/roads';
 import { fetchRoute, RouteTracker, type Place } from './services/routing';
 
 const SETTINGS_KEY = 'drivehud.settings';
@@ -40,6 +41,10 @@ export class App {
   private renderer = new HudRenderer();
   private source: LocationSource | null = null;
   private normalizer = new FixNormalizer();
+  private matcher = new MapMatcher();
+  /** Where the last real fix was matched on the map, for dead reckoning through tunnels. */
+  private lastRef: PathRef | null = null;
+  private roadPaths: { data: RoadData | null; paths: ReturnType<typeof roadPaths> } = { data: null, paths: [] };
   private roads = new RoadDataService();
   private limitFilter = new LimitFilter();
   private tracker: RouteTracker | null = null;
@@ -132,6 +137,8 @@ export class App {
     this.source?.stop();
     this.fix = null;
     this.normalizer = new FixNormalizer();
+    this.matcher = new MapMatcher();
+    this.lastRef = null;
     this.limitFilter = new LimitFilter();
     this.roads = new RoadDataService();
     this.tracker = null;
@@ -147,15 +154,24 @@ export class App {
     this.source.start((raw) => {
       const fix = this.normalizer.next(raw);
       if (!fix) return; // skipped: inaccurate, duplicate or a glitch
-      this.fix = fix;
+      this.fix = this.matcher.snap(fix, this.tracker?.route.points ?? null, this.mapPaths());
+      this.lastRef = this.matcher.last;
       this.tick();
     });
+  }
+
+  /** Minimap road polylines, rebuilt only when new map data arrives. */
+  private mapPaths() {
+    if (this.roadPaths.data !== this.roads.data) this.roadPaths = { data: this.roads.data, paths: roadPaths(this.roads.data) };
+    return this.roadPaths.paths;
   }
 
   private trackRoute(fix: Fix): NavProgress | null {
     if (!this.tracker) return null;
     const result = this.tracker.update(fix);
     if (result.state === 'guiding') return result.progress;
+    // An estimated position drifting off the route is no reason to reroute or announce arrival.
+    if (fix.estimated) return null;
     if (this.settings.demo) {
       this.tracker = new RouteTracker(demoRoute()); // loop the demo drive
     } else if (result.state === 'arrived') {
@@ -167,9 +183,20 @@ export class App {
     return null;
   }
 
+  /**
+   * The position to show: the last real fix while it is recent; then, if GPS has gone quiet while
+   * driving (tunnel, underpass), an estimate along the road; otherwise nothing once it is stale.
+   */
+  private currentFix(now: number): Fix | null {
+    if (!this.fix) return null;
+    const age = now - this.fix.ts;
+    if (age < DR_START_MS) return this.fix;
+    return deadReckon(this.fix, this.lastRef, age, now) ?? (age < STALE_MS ? this.fix : null);
+  }
+
   private tick(): void {
     const now = new Date();
-    const fix = this.fix && now.getTime() - this.fix.ts < STALE_MS ? this.fix : null;
+    const fix = this.currentFix(now.getTime());
     let limit: number | null = null;
     let camera = null;
     let nav = null;
@@ -185,7 +212,7 @@ export class App {
       view,
       settings: this.settings,
       glasses: !!this.glasses,
-      gps: !!fix,
+      gps: !!fix && !fix.estimated,
       destination: this.destination,
       position: this.fix && { lat: this.fix.lat, lon: this.fix.lon },
       navMessage: this.navMessage,
@@ -194,3 +221,5 @@ export class App {
     for (const fn of this.listeners) fn(state);
   }
 }
+
+const roadPaths = (data: RoadData) => data.map.map((w) => w.points);

@@ -9,6 +9,8 @@ export interface Fix extends LatLon {
   heading: number | null;
   accuracy?: number;
   ts: number;
+  /** Not measured: extrapolated along the road while GPS is lost (tunnels, underpasses). */
+  estimated?: boolean;
 }
 
 export type Unit = 'kmh' | 'mph';

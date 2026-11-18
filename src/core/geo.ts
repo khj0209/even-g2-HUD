@@ -67,3 +67,12 @@ const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 export function compass(heading: number): string {
   return COMPASS[Math.round((((heading % 360) + 360) % 360) / 45) % 8];
 }
+
+/** The point `meters` away from `p` on initial bearing `bearingDeg` (flat-earth, fine for a few km). */
+export function destination(p: LatLon, bearingDeg: number, meters: number): LatLon {
+  const b = rad(bearingDeg);
+  return {
+    lat: p.lat + deg((meters * Math.cos(b)) / R),
+    lon: p.lon + deg((meters * Math.sin(b)) / (R * Math.cos(rad(p.lat)))),
+  };
+}

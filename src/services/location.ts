@@ -1,7 +1,7 @@
 import { AppLocationAccuracy, type EvenAppBridge } from '@evenrealities/even_hub_sdk';
 import { bearing, distance } from '../core/geo';
 import type { Fix } from '../core/types';
-import { demoFix } from './demo';
+import { demoFix, inDemoTunnel } from './demo';
 
 export interface LocationSource {
   start(onFix: (fix: Fix) => void): void;
@@ -168,7 +168,7 @@ export class DemoLocationSource implements LocationSource {
     const tick = () => {
       const fix = demoFix(t++, Date.now());
       if (fix.speed === 0 && t > 5) t = 0;
-      onFix(fix);
+      if (!inDemoTunnel(fix)) onFix(fix); // no GPS in the tunnel
     };
     tick();
     this.timer = setInterval(tick, 1000);
