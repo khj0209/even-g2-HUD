@@ -91,7 +91,14 @@ pbcopy < ~/.config/evenhub/credentials.yaml
 ```
 
 GitHub 저장소 → Settings → Secrets and variables → Actions → New repository secret 에서 이름을
-`EVENHUB_CREDENTIALS` 로 하고 복사한 내용을 붙여넣습니다. 로그인이 만료되면 같은 과정을 다시 하면 됩니다.
+`EVENHUB_CREDENTIALS` 로 하고 복사한 내용을 붙여넣습니다.
+
+Even Hub는 로그인을 갱신할 때마다 이전 토큰을 폐기하므로, 워크플로가 갱신된 로그인을 시크릿에 다시 저장합니다.
+이를 위해 GitHub → Settings(개인) → Developer settings → Fine-grained tokens 에서 이 저장소만 대상으로
+**Secrets: Read and write** 권한을 준 토큰을 만들어 `EVENHUB_SECRET_WRITER` 시크릿으로 등록합니다.
+
+- 워크플로가 로그인을 갱신하면 맥에 저장된 로그인은 폐기됩니다. 맥에서 직접 CLI를 쓰려면 다시 로그인하세요.
+- 맥에서 다시 로그인하면 반대로 시크릿의 로그인이 폐기될 수 있으니, 그때는 `EVENHUB_CREDENTIALS` 도 새로 등록하세요.
 
 ## 구조
 

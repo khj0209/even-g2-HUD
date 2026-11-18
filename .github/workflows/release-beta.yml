@@ -1,8 +1,12 @@
 name: Release to Even Hub beta
 
 # Packs the app, uploads the version in app.json to Even Hub and points the beta channel at it.
-# Needs the repository secret EVENHUB_CREDENTIALS: the contents of ~/.config/evenhub/credentials.yaml
-# from a machine where `evenhub login` was run (the CLI's login is interactive and cannot run here).
+# Needs two repository secrets:
+# - EVENHUB_CREDENTIALS: the contents of ~/.config/evenhub/credentials.yaml from a machine where
+#   `evenhub login` was run (the CLI's login is interactive and cannot run here).
+# - EVENHUB_SECRET_WRITER: a fine-grained GitHub token for this repository with "Secrets: read and
+#   write". Even Hub rotates the refresh token whenever the CLI refreshes its login, which revokes
+#   the old one, so the refreshed login has to be written back to EVENHUB_CREDENTIALS after each run.
 on:
   workflow_dispatch:
     inputs:
@@ -46,6 +50,7 @@ jobs:
           # $GITHUB_ENV only applies to later steps, so export it for the check below too.
           export XDG_CONFIG_HOME="$RUNNER_TEMP/xdg"
           echo "XDG_CONFIG_HOME=$XDG_CONFIG_HOME" >> "$GITHUB_ENV"
+          sha256sum "$XDG_CONFIG_HOME/evenhub/credentials.yaml" | cut -d' ' -f1 > "$RUNNER_TEMP/credentials.sha"
           npx evenhub self-check
 
       - name: Upload build
@@ -65,3 +70,22 @@ jobs:
           version=$(node -p "require('./app.json').version")
           npx evenhub promote "$version" --to beta
           npx evenhub ls "$(node -p "require('./app.json').package_id")" --channels
+
+      # Runs even when an earlier step failed: a refresh may already have revoked the stored login.
+      - name: Save refreshed login
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.EVENHUB_SECRET_WRITER }}
+        run: |
+          file="$RUNNER_TEMP/xdg/evenhub/credentials.yaml"
+          [ -f "$file" ] && [ -f "$RUNNER_TEMP/credentials.sha" ] || exit 0
+          if [ "$(sha256sum "$file" | cut -d' ' -f1)" = "$(cat "$RUNNER_TEMP/credentials.sha")" ]; then
+            echo "Login unchanged."
+            exit 0
+          fi
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::The Even Hub login was refreshed, but EVENHUB_SECRET_WRITER is not set, so it could not be saved. The stored login is now revoked: log in again and update EVENHUB_CREDENTIALS."
+            exit 1
+          fi
+          gh secret set EVENHUB_CREDENTIALS --repo "$GITHUB_REPOSITORY" < "$file"
+          echo "Saved the refreshed Even Hub login."
