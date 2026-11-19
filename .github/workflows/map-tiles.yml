@@ -34,9 +34,15 @@ jobs:
       - name: Install osmium
         run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
 
+      # Optional: the national speed camera dataset, if the DATA_GO_KR_KEY secret is set.
+      - name: Download official speed cameras
+        env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: node scripts/fetch-cameras.ts cameras.json
+
       - name: Download the South Korea extract
         run: |
-          curl -fsSL -o korea.osm.pbf https://download.geofabrik.de/asia/south-korea-latest.osm.pbf
+          curl -fsSL --retry 6 --retry-all-errors --retry-delay 60 -o korea.osm.pbf https://download.geofabrik.de/asia/south-korea-latest.osm.pbf
           ls -la korea.osm.pbf
           osmium fileinfo -g header.option.osmosis_replication_timestamp korea.osm.pbf | cut -c1-10 > built.txt
           echo "Data as of $(cat built.txt)"
@@ -47,12 +53,6 @@ jobs:
           osmium export roads.osm.pbf -f geojsonseq -x print_record_separator=false \
             --geometry-types=point,linestring -o roads.geojsonseq
           ls -la roads.osm.pbf roads.geojsonseq
-
-      # Optional: the national speed camera dataset, if the DATA_GO_KR_KEY secret is set.
-      - name: Download official speed cameras
-        env:
-          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
-        run: node scripts/fetch-cameras.ts cameras.json
 
       - name: Cut into tiles
         run: |

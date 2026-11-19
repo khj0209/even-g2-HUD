@@ -1,5 +1,6 @@
 import { angleDiff, bearing, distance, projectOnSegment } from '../core/geo';
 import type { CameraAlert, Fix, LatLon } from '../core/types';
+import { alongPath, pathAhead, type PathRef } from './matching';
 
 /** A road with a tagged speed limit (km/h). */
 export interface RoadWay {
@@ -110,9 +111,30 @@ export function matchLimit(data: RoadData, fix: Fix): number | null {
 
 const CAMERA_ALERT_DIST = 600;
 const CAMERA_CONE = 25;
+/**
+ * A camera counts as "on our road" within this distance of it. Cameras in OpenStreetMap usually sit
+ * on the road line itself; official coordinates are often at the roadside.
+ */
+const ON_ROAD_DIST = 18;
 
-/** Closest speed camera roughly straight ahead. Needs a heading, so nothing is reported at standstill. */
-export function cameraAhead(data: RoadData, fix: Fix): CameraAlert | null {
+/**
+ * Closest camera on the road ahead. With `ref` (where the car is matched on the map) only cameras
+ * on that road or route within 600 m count, measured along the road, so cameras on side roads,
+ * parallel roads or the far carriageway of a divided road aren't announced. Without it (no match,
+ * e.g. crawling), the fallback is anything roughly straight ahead.
+ */
+export function cameraAhead(data: RoadData, fix: Fix, ref: PathRef | null = null): CameraAlert | null {
+  if (ref) {
+    const path = pathAhead(ref, CAMERA_ALERT_DIST);
+    let best: CameraAlert | null = null;
+    for (const cam of data.cameras) {
+      if (distance(fix, cam) > CAMERA_ALERT_DIST + ON_ROAD_DIST) continue;
+      const at = alongPath(path, cam);
+      if (!at || at.off > ON_ROAD_DIST || at.along < 15) continue;
+      if (!best || at.along < best.dist) best = { dist: at.along, limit: cam.maxspeed, kind: cam.kind ?? 0 };
+    }
+    return best;
+  }
   if (fix.heading == null) return null;
   let best: CameraAlert | null = null;
   for (const cam of data.cameras) {
@@ -126,22 +148,34 @@ export function cameraAhead(data: RoadData, fix: Fix): CameraAlert | null {
 
 /**
  * Keeps a camera warning on until the camera is actually passed. A fresh lookup each second would
- * make it blink whenever the heading wobbles out of the narrow "straight ahead" cone.
+ * make it blink whenever the heading wobbles. Once the car is matched to a road that the camera
+ * isn't on (it turned off), the warning goes.
  */
 export class CameraTracker {
   private cam: Camera | null = null;
 
-  next(data: RoadData, fix: Fix): CameraAlert | null {
+  next(data: RoadData, fix: Fix, ref: PathRef | null = null): CameraAlert | null {
     if (this.cam) {
-      const dist = distance(fix, this.cam);
-      const off = fix.heading == null ? 0 : Math.abs(angleDiff(fix.heading, bearing(fix, this.cam)));
+      const cam = this.cam;
+      const straight = distance(fix, cam);
+      const off = fix.heading == null ? 0 : Math.abs(angleDiff(fix.heading, bearing(fix, cam)));
+      const at = ref ? alongPath(pathAhead(ref, CAMERA_ALERT_DIST), cam) : null;
+      // Close by, a momentary mismatch shouldn't drop it; further out, trust the road match.
+      const leftRoad = ref != null && straight > 60 && (!at || at.off > ON_ROAD_DIST * 2);
       // Passed (now behind us), turned away, or out of range: let it go.
-      if (dist < 15 || off > 100 || dist > CAMERA_ALERT_DIST + 150) this.cam = null;
-      else return { dist, limit: this.cam.maxspeed, kind: this.cam.kind ?? 0 };
+      if (straight < 15 || off > 100 || straight > CAMERA_ALERT_DIST + 150 || leftRoad) this.cam = null;
+      else return { dist: at && at.off <= ON_ROAD_DIST * 2 ? at.along : straight, limit: cam.maxspeed, kind: cam.kind ?? 0 };
     }
-    const found = cameraAhead(data, fix);
+    const found = cameraAhead(data, fix, ref);
     if (!found) return null;
-    this.cam = data.cameras.find((c) => Math.abs(distance(fix, c) - found.dist) < 0.5) ?? null;
+    this.cam =
+      data.cameras.find((c) => {
+        if (ref) {
+          const at = alongPath(pathAhead(ref, CAMERA_ALERT_DIST), c);
+          return !!at && Math.abs(at.along - found.dist) < 0.5;
+        }
+        return Math.abs(distance(fix, c) - found.dist) < 0.5;
+      }) ?? null;
     return found;
   }
 }

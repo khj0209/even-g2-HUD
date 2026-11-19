@@ -424,7 +424,7 @@ export class App {
       const tmap = this.settings.demo ? null : this.tmapLimits.limitAt(fix);
       limit = this.limitFilter.next(tmap ?? matchLimit(this.roads.data, fix), this.roadChanged && !fix.estimated);
       this.roadChanged = false;
-      camera = this.cameras.next(this.roads.data, fix);
+      camera = this.cameras.next(this.roads.data, fix, fix.estimated ? null : this.lastRef);
       nav = this.trackRoute(fix);
     } else limit = this.limitFilter.current;
     // Ride out short gaps in guidance (a stray fix off the route, GPS dropping out).

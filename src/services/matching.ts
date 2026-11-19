@@ -135,3 +135,44 @@ export function deadReckon(last: Fix, ref: PathRef | null, elapsedMs: number, no
   } else return null;
   return { ...pos, speed: last.speed, heading, ts: now, estimated: true };
 }
+
+/**
+ * The road ahead of a matched position as a polyline of `meters`, following the matched way (or
+ * route) and carrying straight on past its end — roads are often split into several ways at
+ * junctions, and the next one isn't known yet.
+ */
+export function pathAhead(ref: PathRef, meters: number): LatLon[] {
+  const { points, forward } = ref;
+  const out: LatLon[] = [pointOnPath(ref)];
+  let cur = out[0];
+  let left = meters;
+  for (let i = forward ? ref.seg + 1 : ref.seg; left > 0 && i >= 0 && i < points.length; i += forward ? 1 : -1) {
+    const d = distance(cur, points[i]);
+    if (d >= left) {
+      out.push(destination(cur, bearing(cur, points[i]), left));
+      return out;
+    }
+    if (d > 0) out.push(points[i]);
+    left -= d;
+    cur = points[i];
+  }
+  if (left > 0) {
+    const dir = out.length >= 2 ? bearing(out[out.length - 2], cur) : bearingOnPath(ref);
+    out.push(destination(cur, dir, left));
+  }
+  return out;
+}
+
+/** How far along `path` the point lies, and how far off it, or null if it's beyond either end. */
+export function alongPath(path: LatLon[], p: LatLon): { along: number; off: number } | null {
+  let best: { along: number; off: number } | null = null;
+  let walked = 0;
+  for (let i = 0; i + 1 < path.length; i++) {
+    const len = distance(path[i], path[i + 1]);
+    const { dist, t } = projectOnSegment(p, path[i], path[i + 1]);
+    const endClamped = (i === 0 && t === 0) || (i + 2 === path.length && t === 1);
+    if (!endClamped && (!best || dist < best.off)) best = { along: walked + t * len, off: dist };
+    walked += len;
+  }
+  return best;
+}

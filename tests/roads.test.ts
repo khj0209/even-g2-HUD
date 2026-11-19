@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Fix } from '../src/core/types';
-import { CameraTracker, OverpassClient, parseBuildings, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
+import { matchToPaths } from '../src/services/matching';
+import { CameraTracker, emptyRoadData, OverpassClient, parseBuildings, cameraAhead, matchLimit, parseMaxspeed, parseOverpass, type RoadData } from '../src/services/roads';
 
 const fix = (lat: number, lon: number, heading: number | null): Fix => ({ lat, lon, heading, speed: 15, ts: 0 });
 
@@ -167,5 +168,51 @@ describe('OverpassClient', () => {
     const fetchFn = (async () =>
       new Response(JSON.stringify({ elements: [], remark: 'runtime error: Query timed out' }))) as typeof fetch;
     await expect(new OverpassClient(fetchFn, ['a'], 0).run('q')).rejects.toThrow('서버 처리 시간 초과');
+  });
+});
+
+describe('cameras on the road ahead', () => {
+  const M = 1 / 111195;
+  const road = [
+    { lat: 37.5, lon: 126.99 },
+    { lat: 37.5, lon: 127.01 },
+  ];
+  const onRoad = { lat: 37.5, lon: 127.004, maxspeed: 50 };
+  const parallel = { lat: 37.5 + 40 * M, lon: 127.003, maxspeed: 60 }; // 40 m north, a parallel street
+  const roadside = { lat: 37.5 + 12 * M, lon: 127.005, maxspeed: 70 }; // official data: by the road
+  const car = fix(37.5, 127.001, 90);
+  const ref = () => matchToPaths(car, [road], 20)!;
+  const cams = (...cameras: RoadData['cameras']): RoadData => ({ ...emptyRoadData(), cameras });
+
+  it('announces a camera on the matched road, measured along it', () => {
+    const a = cameraAhead(cams(onRoad), car, ref());
+    expect(a?.limit).toBe(50);
+    expect(a!.dist).toBeCloseTo(265, -1);
+    expect(cameraAhead(cams(roadside), car, ref())?.limit).toBe(70);
+  });
+
+  it('ignores cameras on parallel roads that the old straight-ahead check caught', () => {
+    expect(cameraAhead(cams(parallel), car)?.limit).toBe(60); // fallback, no road match
+    expect(cameraAhead(cams(parallel), car, ref())).toBeNull();
+  });
+
+  it('carries straight on past the end of the matched way', () => {
+    const shortWay = [
+      { lat: 37.5, lon: 126.99 },
+      { lat: 37.5, lon: 127.002 },
+    ];
+    expect(cameraAhead(cams(onRoad), car, matchToPaths(car, [shortWay], 20))?.limit).toBe(50);
+  });
+
+  it('drops a held warning once the car has turned onto another road', () => {
+    const t = new CameraTracker();
+    expect(t.next(cams(onRoad), car, ref())?.limit).toBe(50);
+    // Turned north onto a side street at 127.002: matched there now.
+    const side = [
+      { lat: 37.5, lon: 127.002 },
+      { lat: 37.51, lon: 127.002 },
+    ];
+    const turned = fix(37.5 + 30 * M, 127.002, 0);
+    expect(t.next(cams(onRoad), turned, matchToPaths(turned, [side], 20))).toBeNull();
   });
 });
