@@ -124,10 +124,17 @@ export interface BundledCamera extends LatLon {
   section?: number;
 }
 
+/** "01" → "1": the dataset writes codes both with and without leading zeros. */
+const code = (v: unknown) => String(v ?? '').trim().replace(/^0+(?=\d)/, '');
+
 /**
  * One row of the national speed camera dataset (공공데이터포털 "전국무인교통단속카메라표준데이터",
- * OpenAPI field names). regltSctnLcSe marks section-enforcement start/end; a camera without a
- * speed limit (lmttVe 0) enforces signals only.
+ * OpenAPI field names).
+ * - regltSctnLcSe 1 / 2 (or 01 / 02): start / end of a section speed check (구간단속).
+ * - lmttVe: the enforced speed limit, 0 when the camera doesn't check speed.
+ * - regltSe: what it enforces, e.g. "1", "02", "01+02"; 2 is the signal (신호) code. A camera with
+ *   no speed limit and code 2 is a signal camera; other codes without a limit (3, 4, 99) are
+ *   announced as a plain "단속" since their exact meaning isn't documented in the data.
  */
 export function parseOfficialCamera(r: Record<string, unknown>): BundledCamera | null {
   const lat = parseFloat(String(r.latitude ?? ''));
@@ -135,11 +142,12 @@ export function parseOfficialCamera(r: Record<string, unknown>): BundledCamera |
   if (!(lat > 33 && lat < 39 && lon > 124 && lon < 132)) return null;
   const v = parseFloat(String(r.lmttVe ?? ''));
   const maxspeed = v > 0 ? Math.round(v) : null;
-  const where = String(r.regltSctnLcSe ?? '').trim();
+  const where = code(r.regltSctnLcSe);
+  const kinds = String(r.regltSe ?? '').split('+').map(code);
   let kind = CAM_SPEED;
-  if (/^(1|시점|시작)/.test(where)) kind = CAM_SECTION_START;
-  else if (/^(2|종점|끝)/.test(where)) kind = CAM_SECTION_END;
-  else if (!maxspeed) kind = CAM_SIGNAL;
+  if (where === '1' || /^(시점|시작)/.test(where)) kind = CAM_SECTION_START;
+  else if (where === '2' || /^(종점|끝)/.test(where)) kind = CAM_SECTION_END;
+  else if (!maxspeed && kinds.includes('2')) kind = CAM_SIGNAL;
   const len = parseFloat(String(r.ovrspdRegltSctnLt ?? ''));
   // Given in km in most rows; treat large numbers as metres.
   const section = kind === CAM_SECTION_START && len > 0 ? Math.round(len < 100 ? len * 1000 : len) : 0;

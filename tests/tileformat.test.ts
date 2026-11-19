@@ -63,7 +63,11 @@ describe('parseOfficialCamera', () => {
 
   it('tells speed, signal and section cameras apart', () => {
     expect(row({ lmttVe: '60' })).toMatchObject({ kind: CAM_SPEED, maxspeed: 60 });
-    expect(row({ lmttVe: '0' })).toMatchObject({ kind: CAM_SIGNAL, maxspeed: null });
+    expect(row({ lmttVe: '0', regltSe: '02' })).toMatchObject({ kind: CAM_SIGNAL, maxspeed: null });
+    expect(row({ lmttVe: '0', regltSe: '4' })).toMatchObject({ kind: CAM_SPEED, maxspeed: null }); // plain 단속
+    expect(row({ lmttVe: '60', regltSe: '01+02' })).toMatchObject({ kind: CAM_SPEED, maxspeed: 60 });
+    expect(row({ lmttVe: '100', regltSe: '99', regltSctnLcSe: '01' })).toMatchObject({ kind: CAM_SECTION_START });
+    expect(row({ lmttVe: '100', regltSe: '99', regltSctnLcSe: '02' })).toMatchObject({ kind: CAM_SECTION_END });
     expect(row({ lmttVe: '100', regltSctnLcSe: '1', ovrspdRegltSctnLt: '7.6' })).toMatchObject({
       kind: CAM_SECTION_START,
       maxspeed: 100,
