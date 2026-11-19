@@ -24,6 +24,7 @@ const count = (k: string) => tally.set(k, (tally.get(k) ?? 0) + 1);
 for (let page = 1; page <= 200; page++) {
   const params = new URLSearchParams({ serviceKey: key, pageNo: String(page), numOfRows: '1000', type: 'json' });
   let json: any = null;
+  let lastError = '';
   for (let attempt = 0; attempt < 5 && !json; attempt++) {
     try {
       const r = await fetch(`${API}?${params}`, { signal: AbortSignal.timeout(60000) });
@@ -31,14 +32,17 @@ for (let page = 1; page <= 200; page++) {
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 200)}`);
       json = JSON.parse(text);
     } catch (e) {
-      console.warn(`page ${page} attempt ${attempt + 1}:`, e instanceof Error ? e.message : e);
+      lastError = e instanceof Error ? e.message : String(e);
+      console.warn(`page ${page} attempt ${attempt + 1}:`, lastError);
       await new Promise((res) => setTimeout(res, 2000 * 2 ** attempt));
     }
   }
   const header = json?.response?.header;
   if (!json || (header && header.resultCode !== '00')) {
     // Don't take the whole map build down with it: fall back to OpenStreetMap's cameras.
-    const why = json ? `API error ${header.resultCode}: ${header.resultMsg}` : `no answer for page ${page}`;
+    // e.g. SERVICE_KEY_IS_NOT_REGISTERED_ERROR: the key isn't active (yet) for this API.
+    const short = (lastError.match(/"errMsg":\s*"([^"]+)"/)?.[1] ?? lastError).slice(0, 160);
+    const why = json ? `API error ${header.resultCode}: ${header.resultMsg}` : `page ${page}: ${short}`;
     console.log(`::warning::Official cameras unavailable (${why}); using OpenStreetMap cameras.`);
     writeFileSync(out, '[]');
     process.exit(0);
