@@ -63,8 +63,10 @@ async function getPage(page: number, rows: number): Promise<{ items: any[]; tota
   }
   // e.g. SERVICE_KEY_IS_NOT_REGISTERED_ERROR: the key isn't active (yet) for this API.
   if (!json) fallback(`page ${page}: ${(lastError.match(/"errMsg":\s*"([^"]+)"/)?.[1] ?? lastError).slice(0, 160)}`);
-  const header = json?.response?.header;
-  const body = json?.response?.body;
+  // Some portal APIs wrap the answer in "response", this one answers {header, body} directly.
+  const root = json?.response ?? json;
+  const header = root?.header;
+  const body = root?.body;
   let items = body?.items ?? [];
   if (!Array.isArray(items)) items = items?.item ?? [];
   if (!Array.isArray(items)) items = [items];
@@ -75,7 +77,7 @@ async function getPage(page: number, rows: number): Promise<{ items: any[]; tota
       resultMsg: header?.resultMsg,
       totalCount: body?.totalCount,
       items: items.length,
-      keys: Object.keys(json?.response ?? json ?? {}),
+      keys: Object.keys(root ?? {}),
       sample: text.slice(0, 300),
     };
   if (header && header.resultCode !== '00') fallback(`API error ${header.resultCode}: ${header.resultMsg}`);
