@@ -33,14 +33,26 @@ if (!key) {
 const cameras: BundledCamera[] = [];
 const tally = new Map<string, number>();
 const count = (k: string) => tally.set(k, (tally.get(k) ?? 0) + 1);
-for (let page = 1; page <= 200; page++) {
-  const params = new URLSearchParams({ serviceKey: key, pageNo: String(page), numOfRows: '1000', type: 'json' });
-  let json: any = null;
+/** What the first page looked like, kept in the stats so a surprise (e.g. 0 rows) can be diagnosed. */
+let firstPage: Record<string, unknown> | null = null;
+
+function fallback(why: string): never {
+  // Don't take the whole map build down with it: fall back to OpenStreetMap's cameras.
+  console.log(`::warning::Official cameras unavailable (${why}; key ${shape}); using OpenStreetMap cameras.`);
+  writeFileSync(out, '[]');
+  writeFileSync(`${out}.stats.json`, JSON.stringify({ _firstPage: firstPage }));
+  process.exit(0);
+}
+
+async function getPage(page: number, rows: number): Promise<{ items: any[]; total: number }> {
+  const params = new URLSearchParams({ serviceKey: key, pageNo: String(page), numOfRows: String(rows), type: 'json' });
+  let text = '';
   let lastError = '';
+  let json: any = null;
   for (let attempt = 0; attempt < 5 && !json; attempt++) {
     try {
       const r = await fetch(`${API}?${params}`, { signal: AbortSignal.timeout(60000) });
-      const text = await r.text();
+      text = await r.text();
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 200)}`);
       json = JSON.parse(text);
     } catch (e) {
@@ -49,29 +61,50 @@ for (let page = 1; page <= 200; page++) {
       await new Promise((res) => setTimeout(res, 2000 * 2 ** attempt));
     }
   }
+  // e.g. SERVICE_KEY_IS_NOT_REGISTERED_ERROR: the key isn't active (yet) for this API.
+  if (!json) fallback(`page ${page}: ${(lastError.match(/"errMsg":\s*"([^"]+)"/)?.[1] ?? lastError).slice(0, 160)}`);
   const header = json?.response?.header;
-  if (!json || (header && header.resultCode !== '00')) {
-    // Don't take the whole map build down with it: fall back to OpenStreetMap's cameras.
-    // e.g. SERVICE_KEY_IS_NOT_REGISTERED_ERROR: the key isn't active (yet) for this API.
-    const short = (lastError.match(/"errMsg":\s*"([^"]+)"/)?.[1] ?? lastError).slice(0, 160);
-    const why = json ? `API error ${header.resultCode}: ${header.resultMsg}` : `page ${page}: ${short}`;
-    console.log(`::warning::Official cameras unavailable (${why}; key ${shape}); using OpenStreetMap cameras.`);
-    writeFileSync(out, '[]');
-    process.exit(0);
-  }
-  let items = json?.response?.body?.items ?? [];
-  if (!Array.isArray(items)) items = items.item ?? [];
-  for (const row of items) {
+  const body = json?.response?.body;
+  let items = body?.items ?? [];
+  if (!Array.isArray(items)) items = items?.item ?? [];
+  if (!Array.isArray(items)) items = [items];
+  if (page === 1)
+    firstPage = {
+      rows,
+      resultCode: header?.resultCode,
+      resultMsg: header?.resultMsg,
+      totalCount: body?.totalCount,
+      items: items.length,
+      keys: Object.keys(json?.response ?? json ?? {}),
+      sample: text.slice(0, 300),
+    };
+  if (header && header.resultCode !== '00') fallback(`API error ${header.resultCode}: ${header.resultMsg}`);
+  return { items, total: Number(body?.totalCount) || 0 };
+}
+
+// Some portal APIs cap the page size and answer an over-large request with no rows: fall back to 100.
+let rows = 1000;
+let first = await getPage(1, rows);
+if (!first.items.length) {
+  rows = 100;
+  first = await getPage(1, rows);
+}
+for (let page = 1, res = first; ; ) {
+  for (const row of res.items) {
     count(`단속구분 ${row.regltSe || '-'} / 구간위치 ${row.regltSctnLcSe || '-'} / 제한속도 ${Number(row.lmttVe) > 0 ? 'O' : 'X'}`);
     const cam = parseOfficialCamera(row);
     if (cam) cameras.push(cam);
   }
-  if (items.length < 1000) break;
+  if (res.items.length < rows || page * rows >= (res.total || Infinity) || page >= 2000) break;
+  res = await getPage(++page, rows);
 }
 
 writeFileSync(out, JSON.stringify(cameras));
 // Code tally next to the cameras, so the tile index (and the deploy check) can show it.
-writeFileSync(`${out}.stats.json`, JSON.stringify(Object.fromEntries([...tally].sort((a, b) => b[1] - a[1]))));
+writeFileSync(
+  `${out}.stats.json`,
+  JSON.stringify({ _firstPage: { ...(firstPage as Record<string, unknown> | null), sample: undefined }, ...Object.fromEntries([...tally].sort((a, b) => b[1] - a[1])) }),
+);
 console.log(`${cameras.length} cameras`);
 // So the codes can be checked against what the HUD assumes.
 for (const [k, n] of [...tally].sort((a, b) => b[1] - a[1])) console.log(`  ${k}: ${n}`);
