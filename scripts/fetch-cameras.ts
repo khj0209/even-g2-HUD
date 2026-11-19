@@ -54,6 +54,8 @@ for (let page = 1; page <= 200; page++) {
 }
 
 writeFileSync(out, JSON.stringify(cameras));
+// Code tally next to the cameras, so the tile index (and the deploy check) can show it.
+writeFileSync(`${out}.stats.json`, JSON.stringify(Object.fromEntries([...tally].sort((a, b) => b[1] - a[1]))));
 console.log(`${cameras.length} cameras`);
 // So the codes can be checked against what the HUD assumes.
 for (const [k, n] of [...tally].sort((a, b) => b[1] - a[1])) console.log(`  ${k}: ${n}`);

@@ -67,7 +67,16 @@ for (const [key, data] of tiles) {
 }
 writeFileSync(
   `${outDir}/index.json`,
-  JSON.stringify({ version: 1, built, tiles: tiles.size, ways, cameras, cameraSource: official.length ? 'data.go.kr' : 'osm' }),
+  JSON.stringify({
+    version: 1,
+    built,
+    tiles: tiles.size,
+    ways,
+    cameras,
+    cameraSource: official.length ? 'data.go.kr' : 'osm',
+    cameraCodes:
+      camerasFile && existsSync(`${camerasFile}.stats.json`) ? JSON.parse(readFileSync(`${camerasFile}.stats.json`, 'utf8')) : undefined,
+  }),
 );
 writeFileSync(`${outDir}/.nojekyll`, '');
 console.log(
