@@ -278,6 +278,8 @@ class TileCache {
   private pauses = 0;
   error = '';
   stored = 0;
+  /** Downloads finished (for the background diagnostics). */
+  downloads = 0;
   prefetch = { total: 0, done: 0 };
 
   constructor(
@@ -370,6 +372,7 @@ class TileCache {
             ? parseLayer(job.layer, await this.client.run(tileQuery(job.layer, job.tile)))
             : await this.bundled.fetchTile(job.tile);
           if (job.prio === 0) this.mem.set(job.key, data);
+          this.downloads++;
           this.failures.delete(job.key);
           this.error = '';
           if (this.viaOverpass(job)) this.pauses = 0;
@@ -520,6 +523,11 @@ export class RoadDataService {
   prefetchArea(p: LatLon, radius: number): void {
     this.cache.want('roads', tilesAround(p, Math.ceil(radius / 1100)), 1);
     this.cache.want('buildings', tilesAround(p, 1), 1);
+  }
+
+  /** Tiles downloaded so far. */
+  get downloads(): number {
+    return this.cache.downloads;
   }
 
   clearStored(): Promise<void> {

@@ -235,7 +235,10 @@ export class OverpassClient {
     for (let k = 0; k < this.endpoints.length; k++) {
       const i = (this.preferred + k) % this.endpoints.length;
       const wait = this.lastStart + this.minGapMs - Date.now();
-      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      // With the phone screen off, browsers stretch timers to as much as a minute; requests are
+      // already sparse then (one per new tile), so skip the courtesy gap rather than stall.
+      const hidden = typeof document !== 'undefined' && document.hidden;
+      if (wait > 0 && !hidden) await new Promise((r) => setTimeout(r, wait));
       this.lastStart = Date.now();
       try {
         const r = await this.fetchFn(this.endpoints[i], {

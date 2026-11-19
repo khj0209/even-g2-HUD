@@ -39,6 +39,7 @@ $('trip-clear').onclick = () => {
   if (confirm('주행 기록을 모두 지울까요?')) app.clearTrips();
 };
 addEventListener('pagehide', () => app.shutdown());
+document.addEventListener('visibilitychange', () => app.setVisible(document.visibilityState === 'visible'));
 $('map-prefetch').onclick = () => app.prefetchHere();
 $('map-clear').onclick = () => {
   if (confirm('저장된 지도를 모두 지울까요?')) void app.clearStoredMap();
@@ -102,6 +103,7 @@ $<HTMLFormElement>('search-form').onsubmit = async (e) => {
 
 app.onState((s: AppState) => {
   $('map-status').textContent = s.mapStatus;
+  $('bg-report').textContent = s.backgroundReport;
   night.value = s.settings.nightMode;
   drowsy.checked = s.settings.drowsy.enabled;
   $('drowsy-status').textContent = s.drowsyStatus;

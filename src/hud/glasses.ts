@@ -53,6 +53,8 @@ export class GlassesSink implements HudSink {
   private images = new Map<number, { box: Box; image: HTMLCanvasElement }>();
   private created = false;
   private pumping = false;
+  /** Updates sent, for the background diagnostics. */
+  sent = { images: 0, texts: 0, failed: 0 };
 
   constructor(
     private bridge: EvenAppBridge,
@@ -121,6 +123,7 @@ export class GlassesSink implements HudSink {
         } else if (this.texts.size) {
           const [id, { box, content, level }] = this.texts.entries().next().value!;
           this.texts.delete(id);
+          this.sent.texts++;
           await this.bridge.textContainerUpgrade(
             new TextContainerUpgrade({ containerID: box.id, containerName: box.name, content, textColor: level }),
           );
@@ -143,7 +146,11 @@ export class GlassesSink implements HudSink {
     const result = await this.bridge.updateImageRawData(
       new ImageRawDataUpdate({ containerID: box.id, containerName: box.name, imageData: await pngBytes(image) }),
     );
-    if (result !== ImageRawDataUpdateResult.success) console.warn('[glasses] image', box.name, result);
+    this.sent.images++;
+    if (result !== ImageRawDataUpdateResult.success) {
+      this.sent.failed++;
+      console.warn('[glasses] image', box.name, result);
+    }
   }
 
   private async applyLayout(boxes: Box[]): Promise<void> {

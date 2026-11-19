@@ -318,11 +318,13 @@ export function dimCanvas(c: HTMLCanvasElement): void {
 }
 
 /** Encode a canvas as PNG bytes for `updateImageRawData`. */
-export function pngBytes(c: HTMLCanvasElement): Promise<number[]> {
-  return new Promise((resolve, reject) =>
-    c.toBlob(async (blob) => {
-      if (!blob) return reject(new Error('PNG encode failed'));
-      resolve(Array.from(new Uint8Array(await blob.arrayBuffer())));
-    }, 'image/png'),
-  );
+export async function pngBytes(c: HTMLCanvasElement): Promise<number[]> {
+  // Synchronous toDataURL, not toBlob: browsers run toBlob's encoding in idle time, which a
+  // backgrounded WebView (phone screen off) may defer indefinitely, freezing every image on the
+  // glasses while the text kept updating.
+  const url = c.toDataURL('image/png');
+  const bin = atob(url.slice(url.indexOf(',') + 1));
+  const bytes = new Array<number>(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }

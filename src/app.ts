@@ -58,6 +58,8 @@ export interface AppState {
   trips: Trip[];
   /** Drowsiness warning status for the phone page. */
   drowsyStatus: string;
+  /** What kept running while the phone screen was last off. */
+  backgroundReport: string;
 }
 
 export class App {
@@ -93,6 +95,10 @@ export class App {
   private drowsy: DrowsinessDetector | null = null;
   private calibrator: DrowsyCalibrator | null = null;
   private imu = { count: 0, since: 0, last: [0, 0, 0] as number[] };
+  /** Counts while the phone screen was off, to see what keeps running in the background. */
+  private counters = { fixes: 0, ticks: 0 };
+  private hiddenAt: { at: number; snap: ReturnType<App['snapshot']> } | null = null;
+  private backgroundReport = '';
   private listeners: ((s: AppState) => void)[] = [];
 
   /** `forceDemo` pins demo mode on regardless of saved settings (the `?demo` URL flag). */
@@ -130,6 +136,36 @@ export class App {
     this.renderer.addSink(this.glasses);
     this.applyDrowsy();
     this.restartLocation();
+    this.tick();
+  }
+
+  private snapshot() {
+    return {
+      ...this.counters,
+      images: this.glasses?.sent.images ?? 0,
+      texts: this.glasses?.sent.texts ?? 0,
+      failed: this.glasses?.sent.failed ?? 0,
+      downloads: this.roads.downloads,
+    };
+  }
+
+  /** Phone screen off/on (page hidden/visible): report what ran while it was off. */
+  setVisible(visible: boolean): void {
+    if (!visible) {
+      this.hiddenAt = { at: Date.now(), snap: this.snapshot() };
+      return;
+    }
+    if (!this.hiddenAt) return;
+    const secs = Math.round((Date.now() - this.hiddenAt.at) / 1000);
+    const a = this.hiddenAt.snap;
+    const b = this.snapshot();
+    this.hiddenAt = null;
+    if (secs < 10) return;
+    this.backgroundReport =
+      `화면 꺼짐 ${secs}초 동안: 위치 ${b.fixes - a.fixes}회 · 화면 갱신 ${b.ticks - a.ticks}회 · ` +
+      `글래스 이미지 ${b.images - a.images}회 · 글자 ${b.texts - a.texts}회` +
+      (b.failed - a.failed ? ` (실패 ${b.failed - a.failed})` : '') +
+      ` · 지도 받기 ${b.downloads - a.downloads}회`;
     this.tick();
   }
 
@@ -360,6 +396,7 @@ export class App {
       this.source = this.bridge ? new BridgeLocationSource(this.bridge) : new BrowserLocationSource();
     }
     this.source.start((raw) => {
+      this.counters.fixes++;
       const fix = this.normalizer.next(raw);
       if (!fix) return; // skipped: inaccurate, duplicate or a glitch
       this.fix = this.matcher.snap(fix, this.tracker?.route.points ?? null, this.mapPaths());
@@ -412,6 +449,7 @@ export class App {
   }
 
   private tick(): void {
+    this.counters.ticks++;
     const now = new Date();
     const fix = this.currentFix(now.getTime());
     let limit: number | null = null;
@@ -465,6 +503,7 @@ export class App {
       currentTrip: this.tripRecorder.current,
       trips: this.trips,
       drowsyStatus: this.drowsyStatus(),
+      backgroundReport: this.backgroundReport,
       mapStatus: this.settings.demo
         ? '지도: 데모 데이터'
         : `지도: ${this.roads.statusText()}${this.settings.tmapApiKey ? ` · ${this.tmapLimits.statusText()}` : ''}`,
