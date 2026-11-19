@@ -35,9 +35,14 @@ for (let page = 1; page <= 200; page++) {
       await new Promise((res) => setTimeout(res, 2000 * 2 ** attempt));
     }
   }
-  if (!json) throw new Error(`gave up on page ${page}`);
   const header = json?.response?.header;
-  if (header && header.resultCode !== '00') throw new Error(`API error ${header.resultCode}: ${header.resultMsg}`);
+  if (!json || (header && header.resultCode !== '00')) {
+    // Don't take the whole map build down with it: fall back to OpenStreetMap's cameras.
+    const why = json ? `API error ${header.resultCode}: ${header.resultMsg}` : `no answer for page ${page}`;
+    console.log(`::warning::Official cameras unavailable (${why}); using OpenStreetMap cameras.`);
+    writeFileSync(out, '[]');
+    process.exit(0);
+  }
   let items = json?.response?.body?.items ?? [];
   if (!Array.isArray(items)) items = items.item ?? [];
   for (const row of items) {
