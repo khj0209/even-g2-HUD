@@ -25,7 +25,7 @@ if (key) {
   console.log(`Service key: ${shape}.`);
 }
 if (!key) {
-  console.log('DATA_GO_KR_KEY not set: skipping official cameras (OpenStreetMap cameras will be used).');
+  console.log('::warning::DATA_GO_KR_KEY is not set (or empty): using OpenStreetMap cameras.');
   writeFileSync(out, '[]');
   process.exit(0);
 }
