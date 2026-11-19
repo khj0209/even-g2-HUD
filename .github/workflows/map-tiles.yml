@@ -42,7 +42,9 @@ jobs:
 
       - name: Download the South Korea extract
         run: |
-          curl -fsSL --retry 6 --retry-all-errors --retry-delay 60 -o korea.osm.pbf https://download.geofabrik.de/asia/south-korea-latest.osm.pbf
+          # Geofabrik first; openstreetmap.fr's extract of the same data if it's down.
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 30 -o korea.osm.pbf https://download.geofabrik.de/asia/south-korea-latest.osm.pbf \
+            || curl -fsSL --retry 3 --retry-all-errors --retry-delay 30 -o korea.osm.pbf https://download.openstreetmap.fr/extracts/asia/south_korea-latest.osm.pbf
           ls -la korea.osm.pbf
           osmium fileinfo -g header.option.osmosis_replication_timestamp korea.osm.pbf | cut -c1-10 > built.txt
           echo "Data as of $(cat built.txt)"
