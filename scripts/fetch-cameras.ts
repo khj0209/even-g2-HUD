@@ -9,7 +9,9 @@ import { parseOfficialCamera, type BundledCamera } from '../src/services/tilefor
 
 const API = 'https://api.data.go.kr/openapi/tn_pubr_public_unmanned_traffic_camera_api';
 const out = process.argv[2] ?? 'cameras.json';
-let key = process.env.DATA_GO_KR_KEY ?? '';
+// Pasted secrets often carry a trailing newline, spaces or quotes; any of them makes the portal
+// answer SERVICE_KEY_IS_NOT_REGISTERED_ERROR.
+let key = (process.env.DATA_GO_KR_KEY ?? '').trim().replace(/^["']|["']$/g, '').trim();
 // The portal shows the key both URL-encoded and plain; accept either.
 if (key.includes('%')) key = decodeURIComponent(key);
 if (!key) {
