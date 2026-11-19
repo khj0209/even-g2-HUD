@@ -12,8 +12,18 @@ const out = process.argv[2] ?? 'cameras.json';
 // Pasted secrets often carry a trailing newline, spaces or quotes; any of them makes the portal
 // answer SERVICE_KEY_IS_NOT_REGISTERED_ERROR.
 let key = (process.env.DATA_GO_KR_KEY ?? '').trim().replace(/^["']|["']$/g, '').trim();
+const raw = process.env.DATA_GO_KR_KEY ?? '';
 // The portal shows the key both URL-encoded and plain; accept either.
 if (key.includes('%')) key = decodeURIComponent(key);
+// Describe the key's shape (never its content) so it can be compared with the portal's.
+let shape = '';
+if (key) {
+  const kinds = [/^[0-9a-f]+$/i.test(key) ? 'hex only' : 'mixed', /[+/=]/.test(key) ? 'has + / =' : '', raw.includes('%') ? 'was URL-encoded' : '', raw !== raw.trim() ? 'had surrounding whitespace' : '']
+    .filter(Boolean)
+    .join(', ');
+  shape = `${key.length} characters, ${kinds}`;
+  console.log(`Service key: ${shape}.`);
+}
 if (!key) {
   console.log('DATA_GO_KR_KEY not set: skipping official cameras (OpenStreetMap cameras will be used).');
   writeFileSync(out, '[]');
@@ -45,7 +55,7 @@ for (let page = 1; page <= 200; page++) {
     // e.g. SERVICE_KEY_IS_NOT_REGISTERED_ERROR: the key isn't active (yet) for this API.
     const short = (lastError.match(/"errMsg":\s*"([^"]+)"/)?.[1] ?? lastError).slice(0, 160);
     const why = json ? `API error ${header.resultCode}: ${header.resultMsg}` : `page ${page}: ${short}`;
-    console.log(`::warning::Official cameras unavailable (${why}); using OpenStreetMap cameras.`);
+    console.log(`::warning::Official cameras unavailable (${why}; key ${shape}); using OpenStreetMap cameras.`);
     writeFileSync(out, '[]');
     process.exit(0);
   }
