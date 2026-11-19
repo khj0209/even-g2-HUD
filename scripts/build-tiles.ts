@@ -70,6 +70,8 @@ writeFileSync(
   JSON.stringify({
     version: 1,
     built,
+    // When these tiles were made: the app re-downloads tiles it stored before this.
+    generated: new Date().toISOString(),
     tiles: tiles.size,
     ways,
     cameras,

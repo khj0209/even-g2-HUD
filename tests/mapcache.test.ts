@@ -227,3 +227,26 @@ describe('pre-built tiles', () => {
     expect(urls.filter((u) => u.startsWith(BASE + '/v1/'))).toHaveLength(0);
   });
 });
+
+describe('refreshing stored tiles', () => {
+  it('re-downloads stored roads made before the latest repository build', async () => {
+    const BASE = 'https://example.github.io/t';
+    const store = new MemoryTileStore();
+    const car = tileOf(fix());
+    // Stored yesterday, with no cameras.
+    await store.put(`v2:roads:${car.x}:${car.y}`, { savedAt: Date.now() - 86400000, data: { ways: [], cameras: [], map: [] } });
+    const urls: string[] = [];
+    const fetchFn = (async (url: string) => {
+      urls.push(url);
+      if (url === `${BASE}/index.json`) return new Response(JSON.stringify({ version: 1, built: 'x', generated: new Date().toISOString() }));
+      if (url === `${BASE}/v1/${car.x}/${car.y}.json`) return new Response(encodeTile([], [{ lat: 37.5355, lon: 126.6431, maxspeed: 50 }]));
+      if (url.startsWith(BASE)) return new Response('', { status: 404 });
+      return new Response(JSON.stringify({ elements: [] }));
+    }) as typeof fetch;
+    const svc = new RoadDataService(fetchFn, ['overpass'], store, 0, BASE);
+    svc.update(fix());
+    await settle();
+    expect(urls).toContain(`${BASE}/v1/${car.x}/${car.y}.json`);
+    expect(svc.data.cameras).toHaveLength(1);
+  });
+});

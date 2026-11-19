@@ -189,6 +189,8 @@ export class BundledSource {
   state: 'checking' | 'yes' | 'no' = 'checking';
   /** Date of the OpenStreetMap data the tiles were built from. */
   built = '';
+  /** When the published tiles were made (ms); tiles stored before that are out of date. */
+  generatedAt = 0;
   private ready: Promise<void>;
   private retryAt = 0;
 
@@ -206,6 +208,7 @@ export class BundledSource {
       const j = await r.json();
       if (j?.version !== 1) throw new Error('unknown tile version');
       this.built = String(j.built ?? '');
+      this.generatedAt = Date.parse(j.generated ?? '') || 0;
       this.state = 'yes';
     } catch (e) {
       console.warn('[bundled]', e);
@@ -323,7 +326,13 @@ class TileCache {
   /** Storage first (fast, doesn't wait behind downloads); download only if missing or stale. */
   private async lookup(job: Job): Promise<void> {
     const stored = await this.store.get(job.key).catch(() => undefined);
-    if (stored && Date.now() - stored.savedAt < MAX_AGE_MS) {
+    // A newer build of the repository's tiles (e.g. official cameras added) replaces stored roads.
+    let outdated = false;
+    if (stored && job.layer === 'roads') {
+      await this.bundled.whenKnown();
+      outdated = this.bundled.covers(job.tile) && stored.savedAt < this.bundled.generatedAt;
+    }
+    if (stored && !outdated && Date.now() - stored.savedAt < MAX_AGE_MS) {
       this.busy.delete(job.key);
       if (job.prio === 0) this.mem.set(job.key, stored.data);
       if (job.counted) this.done();
