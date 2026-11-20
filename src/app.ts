@@ -48,6 +48,8 @@ export interface LiveDistances {
   turn: number | null;
   /** Metres to the camera being warned about. */
   camera: number | null;
+  /** Acceleration from the GPS speed trend the estimate is using, m/s² (negative: braking). */
+  accel: number;
   at: number;
 }
 
@@ -216,7 +218,12 @@ export class App {
     if (!fix) return;
     const progress = this.tracker?.progressAt(fix) ?? null;
     const camera = this.settings.cameraAlerts ? this.cameraFor(fix, now) : null;
-    const live: LiveDistances = { turn: progress?.distToManeuver ?? null, camera: camera?.dist ?? null, at: now };
+    const live: LiveDistances = {
+      turn: progress?.distToManeuver ?? null,
+      camera: camera?.dist ?? null,
+      accel: this.smoother.accel,
+      at: now,
+    };
     for (const fn of this.liveListeners) fn(live);
 
     const { alert } = alertText(this.lastSection, camera, this.settings);

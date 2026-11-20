@@ -44,6 +44,7 @@ app.onLive((d) => {
   const parts = [];
   if (d.turn != null) parts.push(`회전까지 ${Math.round(d.turn)} m`);
   if (d.camera != null) parts.push(`단속까지 ${Math.round(d.camera)} m`);
+  if (d.accel) parts.push(`${d.accel < 0 ? '감속' : '가속'} ${Math.abs(d.accel).toFixed(1)} m/s²`);
   liveLine.textContent = parts.length ? `${parts.join(' · ')} (0.1초마다 계산)` : '';
 });
 document.addEventListener('visibilitychange', () => app.setVisible(document.visibilityState === 'visible'));

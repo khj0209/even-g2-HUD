@@ -3,7 +3,7 @@ import { distance } from '../src/core/geo';
 import type { Fix } from '../src/core/types';
 import { matchToPaths } from '../src/services/matching';
 import { routeFromPolyline, RouteTracker } from '../src/services/routing';
-import { LocationSmoother } from '../src/services/smoother';
+import { LocationSmoother, speedTrend, travelled } from '../src/services/smoother';
 
 const M = 1 / 111195;
 const T = 1_000_000;
@@ -70,5 +70,38 @@ describe('RouteTracker.progressAt', () => {
     expect(t.progressAt({ lat: 37.5 + 250 * M, lon: 127 })!.distToManeuver).toBeCloseTo(50, 0);
     expect(t.progressAt({ lat: 37.6, lon: 127.2 })).toBeNull(); // off the route: no side effects
     expect(t.update({ lat: 37.5 + 110 * M, lon: 127 }).state).toBe('guiding');
+  });
+});
+
+describe('speed trend', () => {
+  it('reads braking and speeding up from recent GPS speeds, clamped and noise-free', () => {
+    expect(speedTrend([{ t: 0, v: 20 }, { t: 1000, v: 16 }])).toBeCloseTo(-4, 5);
+    expect(speedTrend([{ t: 0, v: 10 }, { t: 1000, v: 12 }, { t: 2000, v: 14 }])).toBeCloseTo(2, 5);
+    expect(speedTrend([{ t: 0, v: 20 }, { t: 1000, v: 20.2 }])).toBe(0); // GPS wobble
+    expect(speedTrend([{ t: 0, v: 20 }, { t: 1000, v: 5 }])).toBe(-8); // glitch, clamped
+    expect(speedTrend([{ t: 0, v: 20 }])).toBe(0);
+  });
+
+  it('covers less ground while braking, and stops at zero', () => {
+    expect(travelled(16, -4, 0.5)).toBeCloseTo(7.5, 5);
+    expect(travelled(2, -4, 1)).toBeCloseTo(0.5, 5); // stopped after 0.5 s
+    expect(travelled(0, 2, 1)).toBeCloseTo(1, 5);
+  });
+
+  it('slows the estimate down when the car is braking', () => {
+    const s = new LocationSmoother();
+    s.update(fix(37.5, 127, 0, 20), null, T);
+    const f = fix(37.5 + 18 * M, 127, 0, 16);
+    s.update(f, null, T + 1000);
+    expect(s.accel).toBeCloseTo(-4, 5);
+    // Past the fade-in of the correction: 0.8 s at 16 m/s braking at 4 → 11.52 m, not 12.8.
+    expect(distance(s.predict(T + 1800)!, f)).toBeCloseTo(11.52, 1);
+  });
+
+  it('forgets old speeds after a gap', () => {
+    const s = new LocationSmoother();
+    s.update(fix(37.5, 127, 0, 30), null, T);
+    s.update(fix(37.5, 127, 0, 10), null, T + 10000);
+    expect(s.accel).toBe(0);
   });
 });
