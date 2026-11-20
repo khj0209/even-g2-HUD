@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { demoFix, demoRoadData, demoRoute } from '../src/services/demo';
 import { matchLimit } from '../src/services/roads';
-import { osrmToRoute, routeFromPolyline, RouteTracker, searchPlaces, tmapToRoute } from '../src/services/routing';
+import { osrmToRoute, routeFromPolyline, RouteTracker, searchPlaces, tmapToRoute, transferTraffic } from '../src/services/routing';
 
 // North 1.1 km, then east 0.9 km.
 const L = [
@@ -179,5 +179,34 @@ describe('demo drive', () => {
     expect(arrived).toBe(true);
     expect(overspeed).toBeGreaterThan(10);
     expect([...icons]).toEqual(expect.arrayContaining(['right', 'slight-right', 'arrive']));
+  });
+});
+
+describe('traffic', () => {
+  const line = (pts: { lat: number; lon: number }[], traffic?: number[][]) => ({
+    geometry: { type: 'LineString', coordinates: pts.map((p) => [p.lon, p.lat]), ...(traffic ? { traffic } : {}) },
+    properties: {},
+  });
+  const A = { lat: 37.5, lon: 127 };
+  const B = { lat: 37.505, lon: 127 };
+  const C = { lat: 37.51, lon: 127 };
+  const D = { lat: 37.51, lon: 127.01 };
+
+  it('reads per-segment congestion from Tmap lines', () => {
+    const r = tmapToRoute({
+      features: [line([A, B, C], [[0, 1, 1, 50], [1, 2, 4, 5]]), line([C, D], [[0, 1, 3, 15]])],
+    });
+    // Points A B C C D: segments A–B free, B–C jammed, C–C (join) unknown, C–D heavy.
+    expect(r.traffic!.slice(0, 4)).toEqual([1, 4, 0, 3]);
+  });
+
+  it('has no traffic when Tmap sent none', () => {
+    expect(tmapToRoute({ features: [line([A, B])] }).traffic).toBeUndefined();
+  });
+
+  it('copies fresh congestion onto the current route where they overlap', () => {
+    const current = routeFromPolyline([A, B, C, D]);
+    const fresh = { ...routeFromPolyline([A, B, C]), traffic: [2, 4, 0] };
+    expect(transferTraffic(current, fresh).traffic).toEqual([2, 4, 0]); // C–D not on the fresh route
   });
 });

@@ -191,6 +191,35 @@ describe('buildView overview', () => {
     expect(v.overview!.ahead).toHaveLength(3); // split, corner, end
   });
 
+  it('splits the road ahead by traffic', () => {
+    const withTraffic = { ...route, traffic: [1, 4, 0] };
+    const v = buildView(input({ route: withTraffic, fix: { lat: 37.5, lon: 127, speed: 10, heading: 0, ts: now.getTime() } }));
+    expect(v.overview!.aheadTraffic!.map((r) => r.level)).toEqual([1, 4]);
+    expect(buildView(input({ route })).overview!.aheadTraffic).toBeNull();
+  });
+
+  it('draws coastline in the box and drops what is far outside', () => {
+    const geo = {
+      data: {
+        coast: [
+          [
+            { lat: 37.505, lon: 126.999 },
+            { lat: 37.505, lon: 127.011 },
+          ],
+          [
+            { lat: 38.5, lon: 128 },
+            { lat: 38.6, lon: 128 },
+          ],
+        ],
+        rivers: [],
+        water: [],
+      },
+      version: 1,
+    };
+    const v = buildView(input({ route, geo }));
+    expect(v.overview!.geo.coast).toHaveLength(1);
+  });
+
   it('changes its key as the car moves along, not with tiny jitter', () => {
     const at = (lat: number) =>
       buildView(input({ route, fix: { lat, lon: 127, speed: 10, heading: 0, ts: now.getTime() } })).overview!.key;

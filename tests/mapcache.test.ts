@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Fix } from '../src/core/types';
 import { encodeTile } from '../src/services/tileformat';
 import {
+  GeoService,
   MemoryTileStore,
   mergeTiles,
   RoadDataService,
@@ -248,5 +249,30 @@ describe('refreshing stored tiles', () => {
     await settle();
     expect(urls).toContain(`${BASE}/v1/${car.x}/${car.y}.json`);
     expect(svc.data.cameras).toHaveLength(1);
+  });
+});
+
+describe('GeoService', () => {
+  it('loads coarse tiles for a box, treats 404 as empty, and caches them', async () => {
+    const BASE = 'https://example.github.io/g';
+    const urls: string[] = [];
+    let changes = 0;
+    const fetchFn = (async (url: string) => {
+      urls.push(url);
+      if (url === `${BASE}/geo/375/1013.json`) return new Response(JSON.stringify({ c: [[3753000, 12664000, 100, 0]], r: [], w: [] }));
+      return new Response('', { status: 404 });
+    }) as typeof fetch;
+    const store = new MemoryTileStore();
+    const geo = new GeoService(fetchFn, store, () => changes++, BASE);
+    const box = { s: 37.52, w: 126.63, n: 37.54, e: 126.66 };
+    expect(geo.get(box).coast).toHaveLength(0); // still loading
+    await settle();
+    expect(geo.get(box).coast).toHaveLength(1);
+    expect(changes).toBeGreaterThan(0);
+    // A second service finds it in storage.
+    const again = new GeoService((async () => new Response('', { status: 500 })) as typeof fetch, store, () => {}, BASE);
+    again.get(box);
+    await settle();
+    expect(again.get(box).coast).toHaveLength(1);
   });
 });

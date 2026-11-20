@@ -121,6 +121,10 @@ export interface OverviewView {
   /** Route already driven (drawn dim) and still ahead (bright). */
   done: MinimapPoint[];
   ahead: MinimapPoint[];
+  /** The route ahead split by traffic (0 unknown … 4 jammed), when known: drawn thicker when slower. */
+  aheadTraffic: { level: number; points: MinimapPoint[] }[] | null;
+  /** Coastline, rivers and lakes behind the route. */
+  geo: { coast: MinimapPoint[][]; rivers: MinimapPoint[][]; water: MinimapPoint[][] };
   car: MinimapPoint | null;
   /** Direction of travel, degrees clockwise from north; null if unknown. */
   heading: number | null;

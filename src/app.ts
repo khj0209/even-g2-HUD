@@ -19,7 +19,7 @@ import { SectionTracker } from './services/section';
 import { TmapLimitService } from './services/tmaplimit';
 import { MAX_TRIPS, TripRecorder, type Trip } from './services/trip';
 import { CameraTracker, matchLimit, type RoadData } from './services/roads';
-import { fetchRoute, RouteTracker, type Place } from './services/routing';
+import { fetchRoute, RouteTracker, type Place, type Route } from './services/routing';
 
 const SETTINGS_KEY = 'drivehud.settings';
 /** A fix older than this is treated as "no GPS". */
@@ -79,7 +79,7 @@ export class App {
   /** Where the last real fix was matched on the map, for dead reckoning through tunnels. */
   private lastRef: PathRef | null = null;
   private roadPaths: { data: RoadData | null; paths: ReturnType<typeof roadPaths> } = { data: null, paths: [] };
-  private roads = new RoadDataService();
+  private roads = this.newRoads();
   private limitFilter = new LimitFilter();
   private tracker: RouteTracker | null = null;
   private destination: Place | null = null;
@@ -335,7 +335,12 @@ export class App {
     fetchRoute(fix, dest, this.settings.tmapApiKey)
       .then((route) => {
         const saving = nav.remainingTime - route.duration;
-        if (this.destination !== dest || saving < TRAFFIC_MIN_SAVING_S || saving < 0.1 * nav.remainingTime) return;
+        if (this.destination !== dest || !this.tracker) return;
+        if (saving < TRAFFIC_MIN_SAVING_S || saving < 0.1 * nav.remainingTime) {
+          // Not worth switching, but keep the overview's congestion current.
+          this.tracker.updateTraffic(route);
+          return;
+        }
         this.tracker = new RouteTracker(route);
         this.roads.prefetchRoute(route.points);
         this.flash(`더 빠른 길로 변경 · ${Math.round(saving / 60)}분 단축`, 8000);
@@ -384,7 +389,7 @@ export class App {
     this.tripRecorder.finish();
     this.section = new SectionTracker();
     this.limitFilter = new LimitFilter();
-    this.roads = new RoadDataService();
+    this.roads = this.newRoads();
     this.tracker = null;
     this.destination = null;
     this.navMessage = '';
@@ -406,6 +411,25 @@ export class App {
       if (!this.settings.demo) this.tmapLimits.update(this.fix, this.settings.tmapApiKey, this.matcher.road);
       this.tick();
     });
+  }
+
+  private newRoads(): RoadDataService {
+    // Repaint when coastline tiles for the overview arrive.
+    return new RoadDataService(undefined, undefined, undefined, undefined, undefined, () => this.tick());
+  }
+
+  /** The area of a route, padded, for the overview's coastline. */
+  private routeBox = new WeakMap<Route, { s: number; w: number; n: number; e: number }>();
+  private boxOf(route: Route) {
+    let b = this.routeBox.get(route);
+    if (!b) {
+      const lats = route.points.map((p) => p.lat);
+      const lons = route.points.map((p) => p.lon);
+      const pad = 0.05;
+      b = { s: Math.min(...lats) - pad, w: Math.min(...lons) - pad, n: Math.max(...lats) + pad, e: Math.max(...lons) + pad };
+      this.routeBox.set(route, b);
+    }
+    return b;
   }
 
   /** Minimap road polylines, rebuilt only when new map data arrives. */
@@ -485,6 +509,10 @@ export class App {
       nav,
       route: this.tracker?.route ?? null,
       roads: this.roads.data,
+      geo:
+        this.tracker && !this.settings.demo
+          ? { data: this.roads.geo.get(this.boxOf(this.tracker.route)), version: this.roads.geo.version }
+          : null,
       section,
       flash,
       dim,

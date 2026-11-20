@@ -2,6 +2,7 @@ import { compass, interpolate, localOffset, projectOnSegment } from '../core/geo
 import { displayLimit, displaySpeed, formatClock, formatDistance, KMH_PER_MPS, unitLabel } from '../core/format';
 import type { CameraAlert, Fix, LatLon, ManeuverIcon, MinimapPoint, MinimapView, NavProgress, OverviewView, SectionStatus, Settings } from '../core/types';
 import type { RoadData } from '../services/roads';
+import type { GeoTile } from '../services/tileformat';
 import type { Route } from '../services/routing';
 import { MINIMAP, OVERVIEW } from './layout';
 
@@ -22,6 +23,8 @@ export interface HudInput {
   flash?: string | null;
   /** Night: dim the whole HUD. */
   dim?: boolean;
+  /** Coastline and water around the route, and a number that changes when more of it arrives. */
+  geo?: { data: GeoTile; version: number } | null;
   settings: Settings;
   now: Date;
 }
@@ -247,6 +250,24 @@ function thin(points: MinimapPoint[]): MinimapPoint[] {
   return out;
 }
 
+/** Geo lines projected into the overview, per route and geo data version. */
+const overviewGeo = new WeakMap<Route, { version: number; geo: OverviewView['geo'] }>();
+
+function projectGeo(route: Route, geom: OverviewGeom, geo: HudInput['geo']): OverviewView['geo'] {
+  const empty = { coast: [], rivers: [], water: [] };
+  if (!geo) return empty;
+  const cached = overviewGeo.get(route);
+  if (cached && cached.version === geo.version) return cached.geo;
+  const M = 20; // keep lines that pass just outside the box, the canvas clips them
+  const near = (pts: MinimapPoint[]) =>
+    pts.some((p) => p.x > -M && p.x < OVERVIEW.w + M && p.y > -M && p.y < OVERVIEW.h + M);
+  const lines = (ls: LatLon[][]) =>
+    ls.map((l) => thin(l.map(geom.project))).filter((l) => l.length >= 2 && near(l));
+  const out = { coast: lines(geo.data.coast), rivers: lines(geo.data.rivers), water: lines(geo.data.water) };
+  overviewGeo.set(route, { version: geo.version, geo: out });
+  return out;
+}
+
 /** Whole route, north-up, split into driven and remaining parts, with the car and destination. */
 function buildOverview(input: HudInput): OverviewView | null {
   const { route, nav, fix } = input;
@@ -258,9 +279,28 @@ function buildOverview(input: HudInput): OverviewView | null {
   const split = geom.project(pointAlong(route, travelled));
   const car = fix ? geom.project(fix) : null;
   const dest = geom.points[geom.points.length - 1];
+
+  let aheadTraffic: OverviewView['aheadTraffic'] = null;
+  if (route.traffic) {
+    aheadTraffic = [];
+    let run = { level: route.traffic[i] ?? 0, points: [split] };
+    for (let j = i + 1; j < geom.points.length; j++) {
+      run.points.push(geom.points[j]);
+      const next = route.traffic[j] ?? 0;
+      if (j + 1 < geom.points.length && next !== run.level) {
+        aheadTraffic.push({ ...run, points: thin(run.points) });
+        run = { level: next, points: [geom.points[j]] };
+      }
+    }
+    aheadTraffic.push({ ...run, points: thin(run.points) });
+  }
+  const geo = projectGeo(route, geom, input.geo);
+
   return {
     done: thin([...geom.points.slice(0, i + 1), split]),
     ahead: thin([split, ...geom.points.slice(i + 1)]),
+    aheadTraffic,
+    geo,
     car,
     heading: fix?.heading ?? null,
     dest,
@@ -270,6 +310,8 @@ function buildOverview(input: HudInput): OverviewView | null {
       Math.round(split.y),
       car ? `${Math.round(car.x)},${Math.round(car.y)}` : '',
       fix?.heading != null ? Math.round(fix.heading / 15) : '',
+      input.geo?.version ?? 0,
+      aheadTraffic?.map((r) => `${r.level}:${r.points.length}`).join(',') ?? '',
     ].join('|'),
   };
 }

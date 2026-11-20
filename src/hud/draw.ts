@@ -264,11 +264,38 @@ export function drawMinimap(mm: MinimapView | null): HTMLCanvasElement {
   return c;
 }
 
+const WATER_FILL = '#1e1e1e';
+const RIVER = '#4c4c4c';
+const COAST = '#7a7a7a';
+const TRAFFIC_WIDTH = [3, 3, 5, 7, 9];
+
 /** Top-left overview of the whole route: dim where already driven, bright ahead. Blank when not guiding. */
 export function drawOverview(ov: OverviewView | null): HTMLCanvasElement {
   const { w, h } = OVERVIEW;
   const [c, ctx] = canvas(w, h);
   if (!ov) return c;
+
+  // Coastline and water first, faint, clipped to the frame.
+  ctx.save();
+  roundedRectPath(ctx, 1, 1, w - 2, h - 2, 12);
+  ctx.clip();
+  for (const ring of ov.geo.water) {
+    ctx.beginPath();
+    ctx.moveTo(ring[0].x, ring[0].y);
+    for (const p of ring.slice(1)) ctx.lineTo(p.x, p.y);
+    ctx.closePath();
+    ctx.fillStyle = WATER_FILL;
+    ctx.fill();
+  }
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = RIVER;
+  for (const l of [...ov.geo.rivers, ...ov.geo.water]) polyline(ctx, l);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = COAST;
+  for (const l of ov.geo.coast) polyline(ctx, l);
+  ctx.restore();
+
+  ctx.strokeStyle = '#fff';
   ctx.lineWidth = 2;
   roundedRectPath(ctx, 1, 1, w - 2, h - 2, 12);
   ctx.stroke();
@@ -278,10 +305,15 @@ export function drawOverview(ov: OverviewView | null): HTMLCanvasElement {
     ctx.strokeStyle = '#6a6a6a';
     polyline(ctx, ov.done);
   }
-  if (ov.ahead.length >= 2) {
-    ctx.strokeStyle = '#fff';
-    polyline(ctx, ov.ahead);
-  }
+  ctx.strokeStyle = '#fff';
+  if (ov.aheadTraffic) {
+    // Thicker where traffic is slower: unknown/free 3 px, slow 5, heavy 7, jammed 9.
+    for (const run of ov.aheadTraffic) {
+      if (run.points.length < 2) continue;
+      ctx.lineWidth = TRAFFIC_WIDTH[run.level] ?? 3;
+      polyline(ctx, run.points);
+    }
+  } else if (ov.ahead.length >= 2) polyline(ctx, ov.ahead);
   ctx.fillStyle = '#fff';
   ctx.fillRect(ov.dest.x - 4, ov.dest.y - 4, 8, 8);
 

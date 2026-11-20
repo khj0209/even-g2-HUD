@@ -1,5 +1,5 @@
 import { destination, distance } from '../core/geo';
-import { decodeTile, TILE_LAT, TILE_LON, tileOf, type Tile } from './tileformat';
+import { decodeGeoTile, decodeTile, GEO_LAT, GEO_LON, TILE_LAT, TILE_LON, tileOf, type GeoTile, type Tile } from './tileformat';
 import type { Fix, LatLon } from '../core/types';
 import {
   DRIVABLE,
@@ -479,13 +479,18 @@ export class RoadDataService {
   private around: Tile[] = [];
   private wantBuildings = true;
 
+  /** Coastline and water for the route overview. */
+  readonly geo: GeoService;
+
   constructor(
     fetchFn: typeof fetch = (...a) => fetch(...a),
     endpoints = OVERPASS_ENDPOINTS,
     store: TileStore = openTileStore(),
     minGapMs = 1000,
     bundledBase = BUNDLED_BASE,
+    onGeo: () => void = () => {},
   ) {
+    this.geo = new GeoService(fetchFn, store, onGeo, bundledBase);
     this.cache = new TileCache(
       store,
       new OverpassClient(fetchFn, endpoints, minGapMs),
@@ -561,5 +566,76 @@ export class RoadDataService {
     if (paused > 0) parts.push(`서버 혼잡, ${paused}초 후 다시 시도`);
     if (this.cache.error) parts.push(`오류: ${this.cache.error}`);
     return parts.join(' · ');
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Coastlines and water for the route overview
+
+const MAX_GEO_TILES = 64;
+const GEO_RETRY_MS = 60000;
+
+/**
+ * Coarse (~11 km) tiles of coastline, rivers and lakes from the repository's Pages, kept in memory
+ * and in storage. Asked for the area of a route; whatever has arrived so far is returned, and
+ * `version` changes as more arrives.
+ */
+export class GeoService {
+  version = 0;
+  private mem = new Map<string, GeoTile>();
+  private pending = new Map<string, number>();
+  private merged: { keys: string; version: number; data: GeoTile } | null = null;
+
+  constructor(
+    private fetchFn: typeof fetch,
+    private store: TileStore,
+    private onChange: () => void,
+    private base = BUNDLED_BASE,
+  ) {}
+
+  /** Coastline and water within the box (south, west, north, east), as far as loaded. */
+  get(box: { s: number; w: number; n: number; e: number }): GeoTile {
+    const keys: string[] = [];
+    for (let x = Math.floor(box.s / GEO_LAT); x <= Math.floor(box.n / GEO_LAT); x++)
+      for (let y = Math.floor(box.w / GEO_LON); y <= Math.floor(box.e / GEO_LON); y++) keys.push(`${x}:${y}`);
+    if (keys.length > MAX_GEO_TILES) keys.length = MAX_GEO_TILES;
+    for (const k of keys) if (!this.mem.has(k)) void this.load(k);
+    const sig = keys.join(',');
+    if (this.merged?.keys === sig && this.merged.version === this.version) return this.merged.data;
+    const data: GeoTile = { coast: [], rivers: [], water: [] };
+    for (const k of keys) {
+      const t = this.mem.get(k);
+      if (!t) continue;
+      data.coast.push(...t.coast);
+      data.rivers.push(...t.rivers);
+      data.water.push(...t.water);
+    }
+    this.merged = { keys: sig, version: this.version, data };
+    return data;
+  }
+
+  private async load(k: string): Promise<void> {
+    const since = this.pending.get(k);
+    if (since != null && Date.now() - since < GEO_RETRY_MS) return;
+    this.pending.set(k, Date.now());
+    const key = `geo:${k}`;
+    try {
+      const stored = await this.store.get(key).catch(() => undefined);
+      let tile = stored && Date.now() - stored.savedAt < MAX_AGE_MS ? (stored.data as unknown as GeoTile) : null;
+      if (!tile) {
+        const [x, y] = k.split(':');
+        const r = await this.fetchFn(`${this.base}/geo/${x}/${y}.json`, { signal: AbortSignal.timeout(15000) });
+        if (r.status === 404) tile = { coast: [], rivers: [], water: [] }; // open sea or nothing mapped
+        else if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        else tile = decodeGeoTile(await r.json());
+        await this.store.put(key, { savedAt: Date.now(), data: tile as unknown as TileData }).catch(() => undefined);
+      }
+      this.mem.set(k, tile);
+      this.pending.delete(k);
+      this.version++;
+      this.onChange();
+    } catch (e) {
+      console.warn('[geo]', k, e); // retried after GEO_RETRY_MS on a later get()
+    }
   }
 }

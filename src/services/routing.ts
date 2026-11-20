@@ -17,6 +17,11 @@ export interface Route {
   distance: number;
   /** Seconds. */
   duration: number;
+  /**
+   * Traffic on the segment from points[i] to points[i + 1]: 0 unknown, 1 free (원활), 2 slow (서행),
+   * 3 heavy (지체), 4 jammed (정체). Only from Tmap; absent otherwise.
+   */
+  traffic?: number[];
 }
 
 export interface Place extends LatLon {
@@ -101,7 +106,12 @@ export class RouteTracker {
   private seg = 0;
   private offCount = 0;
 
-  constructor(readonly route: Route) {}
+  constructor(public route: Route) {}
+
+  /** The same route with updated traffic: keeps the position along it. */
+  updateTraffic(fresh: Route): void {
+    this.route = transferTraffic(this.route, fresh);
+  }
 
   update(pos: LatLon): TrackResult {
     const { points, cum, steps, distance: total, duration } = this.route;
@@ -213,12 +223,25 @@ export function tmapToRoute(json: any): Route {
   const features: any[] = json?.features ?? [];
   if (!features.length) throw new Error(json?.error?.message || '경로를 찾을 수 없습니다');
   const points: LatLon[] = [];
+  const traffic: number[] = [];
+  let hasTraffic = false;
   const rawSteps: { icon: ManeuverIcon; name: string; idx: number }[] = [];
   let duration = 0;
   for (let i = 0; i < features.length; i++) {
     const f = features[i];
     if (f.geometry?.type === 'LineString') {
-      for (const [lon, lat] of f.geometry.coordinates) points.push({ lat, lon });
+      const base = points.length;
+      for (const [lon, lat] of f.geometry.coordinates) {
+        points.push({ lat, lon });
+        traffic.push(0);
+      }
+      // With trafficInfo=Y: [[startIndex, endIndex, congestion, speed?], …] over this line's points.
+      for (const t of f.geometry.traffic ?? []) {
+        const [from, to, level] = t as number[];
+        if (!(level > 0)) continue;
+        hasTraffic = true;
+        for (let j = from; j < to && base + j < traffic.length; j++) traffic[base + j] = Math.min(4, level);
+      }
     } else if (f.geometry?.type === 'Point') {
       const p = f.properties ?? {};
       if (typeof p.totalTime === 'number') duration = p.totalTime;
@@ -232,7 +255,41 @@ export function tmapToRoute(json: any): Route {
   const cum = cumulative(points);
   const total = cum[cum.length - 1] ?? 0;
   const steps: Step[] = rawSteps.map((s) => ({ icon: s.icon, name: s.name, at: cum[Math.min(s.idx, cum.length - 1)] }));
-  return { points, cum, steps, distance: total, duration };
+  return { points, cum, steps, distance: total, duration, ...(hasTraffic ? { traffic } : {}) };
+}
+
+/**
+ * Copy the traffic of a freshly fetched route onto the current one where they share the road (a
+ * segment of `route` takes the level of the nearest segment of `fresh` within 25 m), so the
+ * overview's congestion stays current without switching routes.
+ */
+export function transferTraffic(route: Route, fresh: Route): Route {
+  if (!fresh.traffic) return route;
+  // Bucket the fresh route's segment midpoints on a ~100 m grid for quick lookup.
+  const cell = (p: LatLon) => `${Math.floor(p.lat / 0.0009)}:${Math.floor(p.lon / 0.0011)}`;
+  const grid = new Map<string, { mid: LatLon; level: number }[]>();
+  for (let i = 0; i + 1 < fresh.points.length; i++) {
+    const a = fresh.points[i];
+    const b = fresh.points[i + 1];
+    const mid = { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 };
+    const k = cell(mid);
+    (grid.get(k) ?? grid.set(k, []).get(k)!).push({ mid, level: fresh.traffic[i] });
+  }
+  const traffic = route.points.slice(0, -1).map((a, i) => {
+    const b = route.points[i + 1];
+    const mid = { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 };
+    const cx = Math.floor(mid.lat / 0.0009);
+    const cy = Math.floor(mid.lon / 0.0011);
+    let best = { d: 25, level: 0 };
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const c of grid.get(`${cx + dx}:${cy + dy}`) ?? []) {
+          const d = distance(mid, c.mid);
+          if (d < best.d) best = { d, level: c.level };
+        }
+    return best.level;
+  });
+  return { ...route, traffic };
 }
 
 export async function fetchRoute(from: LatLon, to: LatLon, apiKey = '', fetchFn: typeof fetch = fetch): Promise<Route> {
