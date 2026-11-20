@@ -62,6 +62,15 @@ jobs:
           du -sh site
           find site -type f | wc -l
 
+      # Coastlines, rivers and lakes for the route overview (after the tiles: merges into index.json).
+      - name: Coastlines and water
+        run: |
+          osmium tags-filter korea.osm.pbf w/natural=coastline w/waterway=river nwr/natural=water nwr/waterway=riverbank -o geo.osm.pbf
+          osmium export geo.osm.pbf -f geojsonseq -x print_record_separator=false \
+            --geometry-types=linestring,polygon -o geo.geojsonseq
+          node --max-old-space-size=8000 scripts/build-geo.ts geo.geojsonseq site
+          du -sh site/geo
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -81,6 +90,8 @@ jobs:
         run: |
           base='${{ steps.deploy.outputs.page_url }}'
           curl -fsS "${base}index.json"; echo
+          # 청라 area coarse tile: coastline should be there.
+          curl -fsS "${base}geo/375/1013.json" -o geo.json && node -e 'const g=require("./geo.json"); console.log(`청라 geo tile: ${g.c.length} coast, ${g.r.length} river, ${g.w.length} water`)' || echo "no geo tile"
           curl -fsS "${base}v1/3753/10131.json" -o tile.json
           node -e '
             const t = require("./tile.json");

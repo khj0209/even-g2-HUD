@@ -42,15 +42,21 @@ export function classify(tags: Record<string, unknown>): { drivable: boolean; ma
  * border, so pieces from neighbouring tiles join up). Keyed "x:y".
  */
 export function splitByTile(points: LatLon[]): Map<string, LatLon[][]> {
+  return splitByGrid(points, TILE_LAT, TILE_LON);
+}
+
+/** splitByTile on any grid (e.g. the coarser one for coastlines). */
+export function splitByGrid(points: LatLon[], latStep: number, lonStep: number): Map<string, LatLon[][]> {
+  const cell = (p: LatLon) => ({ x: Math.floor(p.lat / latStep), y: Math.floor(p.lon / lonStep) });
   const segsByTile = new Map<string, number[]>();
   for (let i = 0; i + 1 < points.length; i++) {
     const a = points[i];
     const b = points[i + 1];
     // Sample the segment finely enough (≤ ~1/4 tile) that no tile it passes through is missed.
-    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(b.lat - a.lat) / (TILE_LAT / 4), Math.abs(b.lon - a.lon) / (TILE_LON / 4))));
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(b.lat - a.lat) / (latStep / 4), Math.abs(b.lon - a.lon) / (lonStep / 4))));
     const keys = new Set<string>();
     for (let s = 0; s <= steps; s++) {
-      const t = tileOf({ lat: a.lat + ((b.lat - a.lat) * s) / steps, lon: a.lon + ((b.lon - a.lon) * s) / steps });
+      const t = cell({ lat: a.lat + ((b.lat - a.lat) * s) / steps, lon: a.lon + ((b.lon - a.lon) * s) / steps });
       keys.add(`${t.x}:${t.y}`);
     }
     for (const k of keys) {
@@ -184,4 +190,63 @@ export function decodeTile(json: any): { ways: BundledWay[]; cameras: BundledCam
     section,
   }));
   return { ways, cameras };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Coastlines and water, for the route overview: coarse tiles (~11 km) of simplified lines.
+
+export const GEO_LAT = 0.1;
+export const GEO_LON = 0.125;
+
+/** Douglas–Peucker simplification to within `tol` metres. */
+export function simplify(points: LatLon[], tol: number): LatLon[] {
+  if (points.length < 3) return points;
+  const lat0 = points[0].lat;
+  const kx = 111320 * Math.cos((lat0 * Math.PI) / 180);
+  const ky = 110540;
+  const xy = points.map((p) => [p.lon * kx, p.lat * ky]);
+  const keep = new Uint8Array(points.length);
+  keep[0] = keep[points.length - 1] = 1;
+  const stack: [number, number][] = [[0, points.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const [ax, ay] = xy[a];
+    const [bx, by] = xy[b];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let worst = -1;
+    let worstD = tol;
+    for (let i = a + 1; i < b; i++) {
+      const [px, py] = xy[i];
+      const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+      const d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+      if (d > worstD) {
+        worstD = d;
+        worst = i;
+      }
+    }
+    if (worst >= 0) {
+      keep[worst] = 1;
+      stack.push([a, worst], [worst, b]);
+    }
+  }
+  return points.filter((_, i) => keep[i]);
+}
+
+export interface GeoTile {
+  /** Coastline. */
+  coast: LatLon[][];
+  /** River centre lines. */
+  rivers: LatLon[][];
+  /** Lakes and wide rivers: closed outlines. */
+  water: LatLon[][];
+}
+
+export const encodeGeoTile = (g: GeoTile) =>
+  JSON.stringify({ c: g.coast.map(encodePoints), r: g.rivers.map(encodePoints), w: g.water.map(encodePoints) });
+
+export function decodeGeoTile(json: any): GeoTile {
+  const lines = (a: unknown) => (Array.isArray(a) ? a.map((p) => decodePoints(p as number[])) : []);
+  return { coast: lines(json?.c), rivers: lines(json?.r), water: lines(json?.w) };
 }
