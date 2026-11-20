@@ -1,9 +1,10 @@
 import type { EvenAppBridge } from '@evenrealities/even_hub_sdk';
+import { formatDistance } from './core/format';
 import { isDark } from './core/sun';
-import { DEFAULT_SETTINGS, type Fix, type LatLon, type NavProgress, type SavedPlace, type Settings } from './core/types';
+import { DEFAULT_SETTINGS, type CameraAlert, type Fix, type LatLon, type NavProgress, type SavedPlace, type Settings } from './core/types';
 import { GlassesSink, type GlassesMenuItem } from './hud/glasses';
 import { HudRenderer, type HudSink } from './hud/renderer';
-import { buildView, LimitFilter, type HudView } from './hud/view';
+import { alertText, buildView, LimitFilter, type HudView } from './hud/view';
 import { demoRoadData, demoRoute } from './services/demo';
 import { DrowsinessDetector, DrowsyCalibrator } from './services/drowsiness';
 import {
@@ -13,7 +14,8 @@ import {
   FixNormalizer,
   type LocationSource,
 } from './services/location';
-import { deadReckon, DR_START_MS, MapMatcher, type PathRef } from './services/matching';
+import { deadReckon, DR_START_MS, MapMatcher, matchToPaths, type PathRef } from './services/matching';
+import { LocationSmoother } from './services/smoother';
 import { RoadDataService } from './services/mapcache';
 import { SectionTracker } from './services/section';
 import { TmapLimitService } from './services/tmaplimit';
@@ -35,6 +37,19 @@ const TRAFFIC_CHECK_MS = 5 * 60 * 1000;
 /** Switch only for a real gain: at least 3 minutes and 10% of the time left. */
 const TRAFFIC_MIN_SAVING_S = 180;
 const CALIBRATION_MS = 4000;
+/** The 10 Hz loop: positions between GPS fixes, and distances to the next turn and camera. */
+const FAST_MS = 100;
+/** How far from the route a fix may be and still be placed on it for the estimate. */
+const ROUTE_REF_DIST = 50;
+
+/** Distances worked out at 10 Hz from the estimated position. */
+export interface LiveDistances {
+  /** Metres to the next manoeuvre, while guiding. */
+  turn: number | null;
+  /** Metres to the camera being warned about. */
+  camera: number | null;
+  at: number;
+}
 
 const MENU: GlassesMenuItem[] = [
   { id: 1, name: '집으로' },
@@ -70,6 +85,10 @@ export class App {
   private source: LocationSource | null = null;
   private normalizer = new FixNormalizer();
   private matcher = new MapMatcher();
+  private smoother = new LocationSmoother();
+  private lastView: HudView | null = null;
+  private lastSection: ReturnType<SectionTracker['update']> = null;
+  private liveListeners: ((d: LiveDistances) => void)[] = [];
   private cameras = new CameraTracker();
   private lastNav: { nav: NavProgress; at: number } | null = null;
   /** The road the last fix was matched to, and whether that just changed (for the limit sign). */
@@ -115,6 +134,7 @@ export class App {
     this.renderer.start();
     this.restartLocation();
     setInterval(() => this.tick(), 1000);
+    setInterval(() => this.fastTick(), FAST_MS);
     this.tick();
   }
 
@@ -167,6 +187,44 @@ export class App {
       (b.failed - a.failed ? ` (실패 ${b.failed - a.failed})` : '') +
       ` · 지도 받기 ${b.downloads - a.downloads}회`;
     this.tick();
+  }
+
+  /**
+   * The camera ahead, from the same place on the road as the position estimate (both loops use
+   * this, so the distance doesn't flip between two ways of measuring it).
+   */
+  private cameraFor(fix: Fix, now: number): CameraAlert | null {
+    const ref = fix.estimated ? null : (this.smoother.refAt(now) ?? this.lastRef);
+    return this.cameras.next(this.roads.data, fix, ref);
+  }
+
+  /** Called 10 times a second with the distances to the next turn and camera. */
+  onLive(fn: (d: LiveDistances) => void): void {
+    this.liveListeners.push(fn);
+  }
+
+  /**
+   * 10 Hz: move the estimate on, and recompute the distances to the next turn and camera. Only
+   * those parts of the HUD are refreshed (the renderer sends a container only when its text
+   * changes); everything else, and anything with side effects like rerouting, stays at 1 Hz.
+   */
+  private fastTick(): void {
+    const view = this.lastView;
+    if (!view || !this.fix) return;
+    const now = Date.now();
+    const fix = this.currentFix(now);
+    if (!fix) return;
+    const progress = this.tracker?.progressAt(fix) ?? null;
+    const camera = this.settings.cameraAlerts ? this.cameraFor(fix, now) : null;
+    const live: LiveDistances = { turn: progress?.distToManeuver ?? null, camera: camera?.dist ?? null, at: now };
+    for (const fn of this.liveListeners) fn(live);
+
+    const { alert } = alertText(this.lastSection, camera, this.settings);
+    const nav = progress && view.nav ? { icon: progress.icon, dist: formatDistance(progress.distToManeuver, this.settings.unit) } : view.nav;
+    if (alert === view.alert && nav?.dist === view.nav?.dist && nav?.icon === view.nav?.icon) return;
+    const next = { ...view, alert, nav };
+    this.lastView = next;
+    this.renderer.render(next);
   }
 
   onState(fn: (s: AppState) => void): void {
@@ -383,6 +441,7 @@ export class App {
     this.fix = null;
     this.normalizer = new FixNormalizer();
     this.matcher = new MapMatcher();
+    this.smoother.reset();
     this.lastRef = null;
     this.cameras = new CameraTracker();
     this.lastNav = null;
@@ -406,6 +465,9 @@ export class App {
       if (!fix) return; // skipped: inaccurate, duplicate or a glitch
       this.fix = this.matcher.snap(fix, this.tracker?.route.points ?? null, this.mapPaths());
       this.lastRef = this.matcher.last;
+      // Between fixes the estimate follows the route while guiding, else the matched road.
+      const onRoute = this.tracker ? matchToPaths(this.fix, [this.tracker.route.points], ROUTE_REF_DIST) : null;
+      this.smoother.update(this.fix, onRoute ?? this.lastRef);
       if (this.matcher.road && this.matcher.road !== this.matchedRoad) this.roadChanged = true;
       if (this.matcher.road) this.matchedRoad = this.matcher.road;
       if (!this.settings.demo) this.tmapLimits.update(this.fix, this.settings.tmapApiKey, this.matcher.road);
@@ -462,7 +524,8 @@ export class App {
   private currentFix(now: number): Fix | null {
     if (!this.fix) return null;
     const age = now - this.fix.ts;
-    if (age < DR_START_MS) return this.fix;
+    // Until dead reckoning takes over, the 10 Hz estimate between fixes.
+    if (age < DR_START_MS) return this.smoother.predict(now) ?? this.fix;
     const dr = deadReckon(this.fix, this.lastRef, age, now);
     if (dr) return dr;
     if (age < STALE_MS) return this.fix;
@@ -486,7 +549,7 @@ export class App {
       const tmap = this.settings.demo ? null : this.tmapLimits.limitAt(fix);
       limit = this.limitFilter.next(tmap ?? matchLimit(this.roads.data, fix), this.roadChanged && !fix.estimated);
       this.roadChanged = false;
-      camera = this.cameras.next(this.roads.data, fix, fix.estimated ? null : this.lastRef);
+      camera = this.cameraFor(fix, now.getTime());
       nav = this.trackRoute(fix);
     } else limit = this.limitFilter.current;
     // Ride out short gaps in guidance (a stray fix off the route, GPS dropping out).
@@ -520,6 +583,8 @@ export class App {
       now,
     });
     this.renderer.render(view);
+    this.lastView = view;
+    this.lastSection = section;
     const state: AppState = {
       view,
       settings: this.settings,

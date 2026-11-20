@@ -39,6 +39,13 @@ $('trip-clear').onclick = () => {
   if (confirm('주행 기록을 모두 지울까요?')) app.clearTrips();
 };
 addEventListener('pagehide', () => app.shutdown());
+const liveLine = $('live');
+app.onLive((d) => {
+  const parts = [];
+  if (d.turn != null) parts.push(`회전까지 ${Math.round(d.turn)} m`);
+  if (d.camera != null) parts.push(`단속까지 ${Math.round(d.camera)} m`);
+  liveLine.textContent = parts.length ? `${parts.join(' · ')} (0.1초마다 계산)` : '';
+});
 document.addEventListener('visibilitychange', () => app.setVisible(document.visibilityState === 'visible'));
 $('map-prefetch').onclick = () => app.prefetchHere();
 $('map-clear').onclick = () => {

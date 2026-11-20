@@ -316,6 +316,25 @@ function buildOverview(input: HudInput): OverviewView | null {
   };
 }
 
+/** The camera / section warning text (shared by the 1 Hz view and the 10 Hz distance updates). */
+export function alertText(
+  sec: SectionStatus | null,
+  cam: CameraAlert | null,
+  settings: Settings,
+): { alert: string; sectionOver: boolean } {
+  const { unit } = settings;
+  const sectionOver = !!sec && sec.limit != null && sec.avgKmh > sec.limit + settings.overspeedTolerance;
+  if (sec) {
+    const avg = `평균 ${displaySpeed(sec.avgKmh / KMH_PER_MPS, unit)}${sectionOver ? ' !' : ''}`;
+    return { alert: `${sec.remaining != null ? `구간 ${formatDistance(sec.remaining, unit)}` : '구간단속'}\n${avg}`, sectionOver };
+  }
+  if (cam) {
+    const label = ['단속', '구간단속', '구간 끝', '신호단속'][cam.kind ?? 0] ?? '단속';
+    return { alert: `${label}\n${formatDistance(cam.dist, unit)}`, sectionOver };
+  }
+  return { alert: '', sectionOver };
+}
+
 export function buildView(input: HudInput): HudView {
   const { fix, camera, nav, settings, now } = input;
   const { unit } = settings;
@@ -334,16 +353,7 @@ export function buildView(input: HudInput): HudView {
   if (fix?.estimated) info = `GPS 추정 · ${info}`;
   if (input.flash) info = input.flash;
 
-  const sec = input.section;
-  const sectionOver = !!sec && sec.limit != null && sec.avgKmh > sec.limit + settings.overspeedTolerance;
-  let alert = '';
-  if (sec) {
-    const avg = `평균 ${displaySpeed(sec.avgKmh / KMH_PER_MPS, unit)}${sectionOver ? ' !' : ''}`;
-    alert = `${sec.remaining != null ? `구간 ${formatDistance(sec.remaining, unit)}` : '구간단속'}\n${avg}`;
-  } else if (cam) {
-    const label = ['단속', '구간단속', '구간 끝', '신호단속'][cam.kind ?? 0] ?? '단속';
-    alert = `${label}\n${formatDistance(cam.dist, unit)}`;
-  }
+  const { alert, sectionOver } = alertText(input.section ?? null, cam, settings);
 
   return {
     speed: fix?.speed != null ? String(displaySpeed(fix.speed, unit)) : '--',

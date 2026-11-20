@@ -114,7 +114,7 @@ export class RouteTracker {
   }
 
   update(pos: LatLon): TrackResult {
-    const { points, cum, steps, distance: total, duration } = this.route;
+    const { points, cum, distance: total } = this.route;
     // Look a little behind and well ahead of the last matched segment; fall back to the whole route.
     let best = this.nearest(pos, Math.max(0, this.seg - 2), Math.min(points.length - 1, this.seg + 40));
     if (best.dist > OFF_ROUTE_DIST) best = this.nearest(pos, 0, points.length - 1);
@@ -129,17 +129,30 @@ export class RouteTracker {
     const travelled = cum[best.seg] + best.t * (cum[best.seg + 1] - cum[best.seg]);
     const remainingDist = Math.max(0, total - travelled);
     if (remainingDist < ARRIVE_DIST && best.dist <= OFF_ROUTE_DIST) return { state: 'arrived' };
+    return { state: 'guiding', progress: this.progress(travelled) };
+  }
 
+  /**
+   * Guidance for a position without changing the tracker's state (no off-route counting, no
+   * progress along the route): for the 10 Hz estimate between GPS fixes. Null if off the route.
+   */
+  progressAt(pos: LatLon): NavProgress | null {
+    const { points, cum } = this.route;
+    const best = this.nearest(pos, Math.max(0, this.seg - 2), Math.min(points.length - 1, this.seg + 40));
+    if (best.dist > OFF_ROUTE_DIST) return null;
+    return this.progress(cum[best.seg] + best.t * (cum[best.seg + 1] - cum[best.seg]));
+  }
+
+  private progress(travelled: number): NavProgress {
+    const { steps, distance: total, duration } = this.route;
+    const remainingDist = Math.max(0, total - travelled);
     const next = steps.find((s) => s.at > travelled + 5) ?? steps[steps.length - 1];
     return {
-      state: 'guiding',
-      progress: {
-        icon: next.icon,
-        distToManeuver: Math.max(0, next.at - travelled),
-        roadName: next.name,
-        remainingDist,
-        remainingTime: total > 0 ? (duration * remainingDist) / total : 0,
-      },
+      icon: next.icon,
+      distToManeuver: Math.max(0, next.at - travelled),
+      roadName: next.name,
+      remainingDist,
+      remainingTime: total > 0 ? (duration * remainingDist) / total : 0,
     };
   }
 
